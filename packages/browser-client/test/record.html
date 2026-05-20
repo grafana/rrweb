@@ -4,11 +4,13 @@
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>@rrweb/ws</title>
+    <title>@rrweb/browser-client</title>
     <script>
-      function emitFn(e) { console.log('ok', e) };
+      function emitFn(e) {
+        console.log('ok', e);
+      }
     </script>
-    <script src="../dist/ws.umd.cjs">
+    <script src="../dist/browser-client.umd.cjs">
       // provide some config
       {
         "emit": "emitFn",

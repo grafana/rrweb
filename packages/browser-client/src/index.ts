@@ -23,7 +23,10 @@ export type clientConfig = {
 
 export type nameValues = Record<string, string | boolean | number>;
 
-export type wsRecordOptions = Omit<recordOptions<eventWithTime>, 'emit'> &
+export type browserClientRecordOptions = Omit<
+  recordOptions<eventWithTime>,
+  'emit'
+> &
   clientConfig & {
     emit?: recordOptions<eventWithTime>['emit'] | string;
   };
@@ -44,7 +47,7 @@ let defaultClientConfig: clientConfig = {
   autostart: false,
   includePii: false,
 };
-const sessionStorageName = 'rrweb-ws-recording-id';
+const sessionStorageName = 'rrweb-browser-client-recording-id';
 const wsLimit = 10e5; // this is approximate and depends on the browser, also on how unicode is encoded (we are comparing against the length of a javascript string)
 
 let ws: Websocket | undefined;
@@ -88,7 +91,7 @@ function removeRecordingId(): void {
 }
 
 function getSetVisitorId() {
-  const nameEQ = 'rrweb-ws-visitor-id=';
+  const nameEQ = 'rrweb-browser-client-visitor-id=';
   let value: string | null = null;
   if (document.cookie) {
     document.cookie.split(';').forEach((cp) => {
@@ -99,7 +102,7 @@ function getSetVisitorId() {
     });
   }
   if (!value) {
-    // eslint-disable-next-line compat/compat -- @rrweb/ws targets modern browsers with crypto UUID support for recording/session identity.
+    // eslint-disable-next-line compat/compat -- @rrweb/browser-client targets modern browsers with crypto UUID support for recording/session identity.
     value = self.crypto.randomUUID();
     const date = new Date();
     date.setTime(date.getTime() + 366 * 86400000); // 1 year
@@ -118,7 +121,7 @@ function getSetRecordingId(): string | null {
   try {
     value = sessionStorage.getItem(sessionStorageName);
     if (!value) {
-      // eslint-disable-next-line compat/compat -- @rrweb/ws targets modern browsers with crypto UUID support for recording/session identity.
+      // eslint-disable-next-line compat/compat -- @rrweb/browser-client targets modern browsers with crypto UUID support for recording/session identity.
       value = self.crypto.randomUUID();
       try {
         sessionStorage.setItem(sessionStorageName, value);
@@ -242,7 +245,9 @@ async function postData(
   return responses;
 }
 
-export function start(options: wsRecordOptions = defaultClientConfig) {
+export function start(
+  options: browserClientRecordOptions = defaultClientConfig,
+) {
   const { includePii, publicApiKey, ...recordOptions } = options;
   let { serverUrl } = options;
 
@@ -280,7 +285,9 @@ export function start(options: wsRecordOptions = defaultClientConfig) {
     // however that would have implications on how we can handle
     // recordings server side (that a recording could mix events from
     // multiple browsing contexts)
-    console.error('@rrweb/ws: Unable to start(); sessionStorage unavailable');
+    console.error(
+      '@rrweb/browser-client: Unable to start(); sessionStorage unavailable',
+    );
     return;
   }
 
@@ -531,7 +538,7 @@ if (document && document.currentScript) {
     start(config);
   }
 }
-function looseJsonParse(obj: string): wsRecordOptions {
+function looseJsonParse(obj: string): browserClientRecordOptions {
   // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/eval#never_use_direct_eval!
   // eslint-disable-next-line @typescript-eslint/no-unsafe-return -- intentionally supports copied script config with bare names/single quotes.
   return eval?.(`"use strict";(${obj})`);

@@ -15,7 +15,7 @@
       "@rrweb/types",
       "@rrweb/packer",
       "@rrweb/utils",
-      "@rrweb/ws",
+      "@rrweb/browser-client",
       "@rrweb/web-extension",
       "rrvideo",
       "@rrweb/rrweb-plugin-console-record",

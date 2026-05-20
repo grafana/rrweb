@@ -1,11 +1,11 @@
-# @rrweb/ws
+# @rrweb/browser-client
 
 WebSocket transport for recording rrweb sessions to an rrweb ingest API.
 
 ## Installation
 
 ```bash
-npm install @rrweb/ws
+npm install @rrweb/browser-client
 ```
 
 ## Usage
@@ -13,7 +13,11 @@ npm install @rrweb/ws
 ### Bundler
 
 ```js
-import rrwebWs, { start, stop, addMeta } from '@rrweb/ws';
+import rrwebBrowserClient, {
+  start,
+  stop,
+  addMeta,
+} from '@rrweb/browser-client';
 
 start({
   serverUrl: 'https://api.rrweb.com/recordings/{recordingId}/ingest/ws',
@@ -26,14 +30,14 @@ start({
 });
 
 addMeta({ plan: 'pro' });
-rrwebWs.stop(false);
+rrwebBrowserClient.stop(false);
 ```
 
 ### Script Tag
 
 ```html
 <script
-  src="https://cdn.jsdelivr.net/npm/@rrweb/ws@latest/dist/ws.umd.cjs"
+  src="https://cdn.jsdelivr.net/npm/@rrweb/browser-client@latest/dist/browser-client.umd.cjs"
   autostart
 >
   {
@@ -46,11 +50,11 @@ rrwebWs.stop(false);
   }
 </script>
 <script>
-  rrwebWs.addMeta({ plan: 'pro' });
+  rrwebBrowserClient.addMeta({ plan: 'pro' });
 </script>
 ```
 
-The UMD global is `rrwebWs`.
+The UMD global is `rrwebBrowserClient`.
 
 ## Options
 
@@ -68,7 +72,7 @@ The UMD global is `rrwebWs`.
 Copy `.env.example` to `.env` in this package when running local integration tests.
 
 ```bash
-VITE_RRWEB_WS_SERVER_URL=http://localhost:8787/recordings/{recordingId}/ingest/ws
-VITE_RRWEB_WS_API_BASE_URL=http://localhost:8787
+VITE_RRWEB_BROWSER_CLIENT_SERVER_URL=http://localhost:8787/recordings/{recordingId}/ingest/ws
+VITE_RRWEB_BROWSER_CLIENT_API_BASE_URL=http://localhost:8787
 VITE_TEST_API_KEY=ak_XXXX
 ```

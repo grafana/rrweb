@@ -9,16 +9,17 @@ import {
   replaceLast,
   ISuite,
 } from './utils';
-import type { wsRecordOptions } from '../src';
+import type { browserClientRecordOptions } from '../src';
 import { eventWithTime, EventType } from '@rrweb/types';
 import { randomUUID } from 'crypto';
 
 // These default to the local test server used by the integration suite.
 const TEST_SERVER_URL =
-  import.meta.env.VITE_RRWEB_WS_SERVER_URL ||
+  import.meta.env.VITE_RRWEB_BROWSER_CLIENT_SERVER_URL ||
   'http://localhost:8787/recordings/{recordingId}/ingest/ws';
 const TEST_API_BASE_URL = (
-  import.meta.env.VITE_RRWEB_WS_API_BASE_URL || 'http://localhost:8787'
+  import.meta.env.VITE_RRWEB_BROWSER_CLIENT_API_BASE_URL ||
+  'http://localhost:8787'
 ).replace(/\/$/, '');
 const TEST_API_KEY = import.meta.env.VITE_TEST_API_KEY || '';
 
@@ -31,8 +32,8 @@ function postIngestUrl(serverUrl: string): string {
 }
 
 function defaultOptions(
-  options: Partial<wsRecordOptions> = {},
-): Partial<wsRecordOptions> {
+  options: Partial<browserClientRecordOptions> = {},
+): Partial<browserClientRecordOptions> {
   options.emit = 'emitFnName';
   if (!options.serverUrl) {
     options.serverUrl = TEST_SERVER_URL;
@@ -48,12 +49,12 @@ function defaultOptions(
   return options;
 }
 
-describe('@rrweb/ws integration tests', function (this: ISuite) {
+describe('@rrweb/browser-client integration tests', function (this: ISuite) {
   vi.setConfig({ testTimeout: 20_000 });
 
   const getHtml = (
     fileName: string,
-    options: Partial<wsRecordOptions> = {},
+    options: Partial<browserClientRecordOptions> = {},
   ): string => {
     const filePath = path.resolve(__dirname, `./html/${fileName}`);
     const html = fs.readFileSync(filePath, 'utf8');
@@ -67,7 +68,7 @@ function emitFnName(event) {
   window.snapshots.push(event);
 }
 </script>
-<script src="${testServerURL}/ws.umd.cjs" autostart async>
+<script src="${testServerURL}/browser-client.umd.cjs" autostart async>
 ${JSON.stringify(defaultOptions(options))}
 </script>
 </head>
@@ -84,9 +85,9 @@ ${JSON.stringify(defaultOptions(options))}
     testServerURL = getServerURL(server);
     browser = await launchPuppeteer();
 
-    expect(fs.existsSync(path.resolve(__dirname, '../dist/ws.umd.cjs'))).toBe(
-      true,
-    );
+    expect(
+      fs.existsSync(path.resolve(__dirname, '../dist/browser-client.umd.cjs')),
+    ).toBe(true);
   });
 
   afterAll(async () => {
@@ -141,7 +142,9 @@ ${JSON.stringify(defaultOptions(options))}
 
     expect(snapshots.length).toBeGreaterThan(1); // meta and fullsnapshot
 
-    recordingId = (await page.evaluate('rrwebWs.getRecordingId()')) as string;
+    recordingId = (await page.evaluate(
+      'rrwebBrowserClient.getRecordingId()',
+    )) as string;
 
     expect(recordingId).toMatch(
       /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/,
@@ -149,7 +152,7 @@ ${JSON.stringify(defaultOptions(options))}
 
     console.log(`got recordingId ${recordingId} test: ${optionsIn}`);
 
-    await page.evaluate('rrwebWs.addMeta({reality: "updated"})');
+    await page.evaluate('rrwebBrowserClient.addMeta({reality: "updated"})');
 
     if (options.disableWebsockets) {
       console.log(`${recordingId} waitForIngest...`);
@@ -282,7 +285,9 @@ ${JSON.stringify(defaultOptions(options))}
 
     expect(snapshots.length).toBeGreaterThan(1); // meta and fullsnapshot
 
-    recordingId = (await page.evaluate('rrwebWs.getRecordingId()')) as string;
+    recordingId = (await page.evaluate(
+      'rrwebBrowserClient.getRecordingId()',
+    )) as string;
 
     expect(recordingId).toMatch(
       /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/,
@@ -292,11 +297,11 @@ ${JSON.stringify(defaultOptions(options))}
 
     let eventsFromFirst = snapshots.length + 1; // .stop() also generates a custom event
 
-    await page.evaluate('rrwebWs.stop(true)');
-    await page.evaluate(`rrwebWs.start()`);
+    await page.evaluate('rrwebBrowserClient.stop(true)');
+    await page.evaluate(`rrwebBrowserClient.start()`);
 
     const recordingId2 = (await page.evaluate(
-      'rrwebWs.getRecordingId()',
+      'rrwebBrowserClient.getRecordingId()',
     )) as string;
 
     expect(recordingId2).toMatch(
