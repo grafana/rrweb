@@ -43,6 +43,9 @@ type NodeInLinkedList = Node & {
   __ln: DoubleLinkedListNode;
 };
 
+const PENDING_ADD_MAX_RETRIES = 500;
+const PENDING_ADD_MAX_AGE = 30_000;
+
 function isNodeInLinkedList(n: Node | NodeInLinkedList): n is NodeInLinkedList {
   return '__ln' in n;
 }
@@ -170,6 +173,8 @@ export default class MutationBuffer {
   private movedSet = new Set<Node>();
   private droppedSet = new Set<Node>();
   private removesSubTreeCache = new Set<Node>();
+  private pendingAdds = new Map<Node, number>();
+  private pendingAddCleanupTimer: ReturnType<typeof setTimeout> | null = null;
 
   private mutationCb: observerParam['mutationCb'];
   private blockClass: observerParam['blockClass'];
@@ -254,6 +259,7 @@ export default class MutationBuffer {
   public reset() {
     this.shadowDomManager.reset();
     this.canvasManager.reset();
+    this.clearPendingAdds();
   }
 
   public processMutations = (mutations: mutationRecord[]) => {
@@ -271,6 +277,8 @@ export default class MutationBuffer {
 
     const adds: addedNodeMutation[] = [];
     const addedIds = new Set<number>();
+    const unresolvedAdds = new Set<Node>();
+    const pendingAddAttempts = new Map(this.pendingAdds);
 
     /**
      * Sometimes child node may be pushed before its newly added
@@ -388,6 +396,15 @@ export default class MutationBuffer {
         this.droppedSet.add(n);
       }
     }
+    this.clearPendingAdds();
+    for (const [n, attempts] of pendingAddAttempts) {
+      if (this.mirror.hasNode(n) || !inDom(n) || attempts >= PENDING_ADD_MAX_RETRIES) {
+        continue;
+      }
+      if (!this.addedSet.has(n) && !this.movedSet.has(n)) {
+        pushAdd(n);
+      }
+    }
 
     let candidate: DoubleLinkedListNode | null = null;
     while (addList.length) {
@@ -435,10 +452,11 @@ export default class MutationBuffer {
       if (!node) {
         /**
          * If all nodes in queue could not find a serialized parent,
-         * it may be a bug or corner case. We need to escape the
-         * dead while loop at once.
+         * keep them for a later emit so they can be retried if another
+         * buffer or event serializes the missing parent/sibling first.
          */
         while (addList.head) {
+          unresolvedAdds.add(addList.head.value);
           addList.removeNode(addList.head.value);
         }
         break;
@@ -497,15 +515,17 @@ export default class MutationBuffer {
       removes: this.removes,
       adds,
     };
+
+    unresolvedAdds.forEach((node) =>
+      this.rememberPendingAdd(node, (pendingAddAttempts.get(node) || 0) + 1),
+    );
+
     // payload may be empty if the mutations happened in some blocked elements
-    if (
+    const payloadIsEmpty =
       !payload.texts.length &&
       !payload.attributes.length &&
       !payload.removes.length &&
-      !payload.adds.length
-    ) {
-      return;
-    }
+      !payload.adds.length;
 
     // reset
     this.texts = [];
@@ -518,8 +538,31 @@ export default class MutationBuffer {
     this.removesSubTreeCache = new Set<Node>();
     this.movedMap = {};
 
+    if (payloadIsEmpty) {
+      return;
+    }
+
     this.mutationCb(payload);
   };
+
+  private rememberPendingAdd(node: Node, attempts: number) {
+    this.pendingAdds.set(node, attempts);
+    if (this.pendingAddCleanupTimer !== null) {
+      clearTimeout(this.pendingAddCleanupTimer);
+    }
+    this.pendingAddCleanupTimer = setTimeout(() => {
+      this.pendingAdds.clear();
+      this.pendingAddCleanupTimer = null;
+    }, PENDING_ADD_MAX_AGE);
+  }
+
+  private clearPendingAdds() {
+    this.pendingAdds.clear();
+    if (this.pendingAddCleanupTimer !== null) {
+      clearTimeout(this.pendingAddCleanupTimer);
+      this.pendingAddCleanupTimer = null;
+    }
+  }
 
   private genTextAreaValueMutation = (textarea: HTMLTextAreaElement) => {
     let item = this.attributeMap.get(textarea);
