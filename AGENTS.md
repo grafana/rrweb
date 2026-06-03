@@ -15,23 +15,23 @@ Important fork context:
 
 - Remote: `git@github.com:grafana/rrweb.git`.
 - Base branch: `master`.
-- Package metadata and Changesets config still reference upstream
-  `rrweb-io/rrweb` in places. That is expected.
-- There are no `.github/workflows` in this fork. Do not reintroduce upstream
-  workflows unless specifically asked.
+- The original upstream README has been moved to `UPSTREAM_README.md`. The
+  root `README.md` is a short internal-fork notice — do not restore upstream
+  README content.
+- Package metadata still references upstream `rrweb-io/rrweb` in places.
+  That is expected.
 - Grafana-specific areas include asset event types, sandboxed replay
-  hardening, Yarn resolution choices, and removal of upstream workflow
-  automation.
+  hardening, npm override choices, and CI/CD configuration.
 
 ## Package Manager
 
-Use Yarn 1 only.
+Use npm only.
 
-- Required package manager: `yarn@1.22.19`.
-- Do not use `npm install`, `pnpm`, or generate `package-lock.json` /
-  `pnpm-lock.yaml`.
-- The root `yarn.lock` is authoritative.
-- The root `package.json` has a `cssom` resolution to `rrweb-cssom`. Keep
+- Required package manager: `npm@11.12.1` (set via `packageManager` field).
+- Do not use `yarn`, `pnpm`, or generate `yarn.lock` / `pnpm-lock.yaml`.
+- The root `package-lock.json` is authoritative.
+- `.npmrc` sets `legacy-peer-deps=true` for peer dependency compatibility.
+- The root `package.json` has a `cssom` override to `rrweb-cssom`. Keep
   this unless a task explicitly changes CSSOM behavior.
 
 ## Quick Commands
@@ -39,113 +39,113 @@ Use Yarn 1 only.
 Install dependencies:
 
 ```sh
-yarn
+npm install
 ```
 
 Build all packages:
 
 ```sh
-yarn build:all
+npm run build:all
 ```
 
 Run all tests:
 
 ```sh
-yarn test
+npm test
 ```
 
 Run all type checks:
 
 ```sh
-yarn check-types
+npm run check-types
 ```
 
 Run lint:
 
 ```sh
-yarn lint
+npm run lint
 ```
 
 Run watch builds for development:
 
 ```sh
-yarn dev
+npm run dev
 ```
 
 Update TypeScript project references after adding, removing, or renaming
 workspaces:
 
 ```sh
-yarn references:update
+npm run references:update
 ```
 
 Format only intended files:
 
 ```sh
-yarn prettier --write <paths>
+npx prettier --write <paths>
 ```
 
 Format files changed from the previous commit:
 
 ```sh
-yarn format:head
+npm run format:head
 ```
 
-Avoid `yarn format` unless broad formatting churn is intended.
+Avoid `npm run format` unless broad formatting churn is intended.
 
 ## Targeted Commands
 
 Build one package with Turbo:
 
 ```sh
-yarn turbo run prepublish --filter=rrweb-snapshot
+npx turbo run prepublish --filter=rrweb-snapshot
 ```
 
 Run a package test from that package directory:
 
 ```sh
-cd packages/rrweb-snapshot && yarn test
+cd packages/rrweb-snapshot && npm test
 ```
 
 Run a focused rrweb browser test:
 
 ```sh
-cd packages/rrweb && PUPPETEER_HEADLESS=true yarn vitest run test/replayer.test.ts -t "sandbox"
+cd packages/rrweb && PUPPETEER_HEADLESS=true npx vitest run test/replayer.test.ts -t "sandbox"
 ```
 
 Run rrweb tests after a package build already exists:
 
 ```sh
-cd packages/rrweb && PUPPETEER_HEADLESS=true yarn retest
+cd packages/rrweb && PUPPETEER_HEADLESS=true npm run retest
 ```
 
 Run rrweb tests with a visible browser for debugging:
 
 ```sh
-cd packages/rrweb && PUPPETEER_HEADLESS=false yarn test:headful
+cd packages/rrweb && PUPPETEER_HEADLESS=false npm run test:headful
 ```
 
 Run the recorder REPL:
 
 ```sh
-cd packages/rrweb && yarn repl
+cd packages/rrweb && npm run repl
 ```
 
 Run the local live stream demo:
 
 ```sh
-cd packages/rrweb && yarn live-stream
+cd packages/rrweb && npm run live-stream
 ```
 
 Build the Chrome extension without inline workers:
 
 ```sh
-cd packages/web-extension && DISABLE_WORKER_INLINING=true yarn build:chrome
+cd packages/web-extension && DISABLE_WORKER_INLINING=true npm run build:chrome
 ```
 
 ## Build System
 
-The monorepo uses Yarn workspaces:
+The monorepo uses npm workspaces:
 
 ```json
 ["packages/*", "packages/plugins/*"]
@@ -153,6 +153,9 @@ The monorepo uses Yarn workspaces:
 
 Turbo orchestrates package tasks. The main root tasks are `prepublish`,
 `test`, `test:update`, `check-types`, `dev`, and `references:update`.
+
+Scripts use bare tool names (e.g. `turbo run prepublish` not
+`npm run turbo ...`) because npm adds `node_modules/.bin` to `PATH`.
 
 Turbo global dependencies include:
 
@@ -447,7 +450,7 @@ constructor that accepts `data` as an alias for `props`.
 
 ## Testing Guidance
 
-Root `yarn test` runs Turbo tests with concurrency 1 and continues after
+Root `npm test` runs Turbo tests with concurrency 1 and continues after
 failures. Use root tests for broad validation and package tests for focused
 work.
 
@@ -458,13 +461,13 @@ Puppeteer tests use `PUPPETEER_HEADLESS`:
 - `PUPPETEER_HEADLESS=true` for normal headless runs.
 - `PUPPETEER_HEADLESS=false` for visible browser debugging.
 
-Several package tests require built artifacts. For `rrweb`, `yarn test`
-builds first; `yarn retest` runs Vitest after a build already exists.
+Several package tests require built artifacts. For `rrweb`, `npm test`
+builds first; `npm run retest` runs Vitest after a build already exists.
 
 Snapshot updates:
 
 ```sh
-yarn test:update
+npm run test:update
 ```
 
 Only update snapshots when output changes are intentional. Inspect diffs
@@ -530,9 +533,6 @@ General style:
 Markdown should follow the existing documentation style. The lint command
 only markdown-lints `docs/`.
 
-Some old changeset files are intentionally ignored by Prettier. Do not
-format the entire `.changeset` directory.
-
 ## Browser Compatibility
 
 The root `browserslist` is:
@@ -544,36 +544,57 @@ The root `browserslist` is:
 `eslint-plugin-compat` checks package source. When adding browser APIs,
 consider compatibility or use guarded feature detection.
 
-## Changesets and Releases
+## CI/CD
 
-This repo uses Changesets and is currently in alpha pre-release mode.
+GitHub Actions workflows:
 
-For public API or behavior changes, add a changeset:
+- **Dependency review** (`.github/workflows/dependency-review.yml`): runs on
+  PRs and merge groups. Checks that new dependencies use Apache-2.0-
+  compatible licenses (MIT, ISC, BSD-2/3-Clause, 0BSD, BlueOak, Unlicense,
+  CC0, CC-BY-4.0, Artistic-2.0). Actions are pinned by SHA.
 
-```sh
-yarn changeset
-```
+Renovate (`.github/renovate.json`) handles automated dependency updates:
 
-The Changesets config uses a fixed release group for all packages. Pick the
-packages affected by the public change.
+- Schedule: Monday, Wednesday, Friday before 5am UTC.
+- Groups npm dependencies, GitHub Actions dependencies, and patch updates.
+- 7-day minimum release age for supply chain protection.
+- OSV vulnerability alerts enabled with priority labeling.
 
-Do not edit `.changeset/pre.json` manually.
+Do not reintroduce upstream GitHub Actions workflows unless specifically
+asked. The fork maintains its own CI configuration. Keep any new workflow
+actions pinned by SHA.
 
-For internal-only maintenance, do not add empty changesets unless maintainers
-ask for one.
+## Releases
 
-Release script:
+This repo uses release-please for versioning and releases.
 
-```sh
-yarn release
-```
+Configuration files:
 
-This runs `yarn build:all` and then `changeset publish`.
+- `release-please-config.json` — monorepo release configuration.
+- `.release-please-manifest.json` — tracks the current version.
+
+Key details:
+
+- All 19 packages are versioned in lockstep via the `extra-files` mechanism
+  in the release-please config.
+- Currently in alpha prerelease mode (`2.0.0-alpha.x`).
+- Release-please automatically creates release PRs with changelogs when
+  conventional commits land on `master`.
+- Do not manually edit `.release-please-manifest.json`.
+- Do not manually bump version numbers in individual `package.json` files —
+  release-please manages all of them.
+- Do not add Changesets or restore the old Changesets release flow.
+- When adding, removing, or renaming packages, update the npm workspace
+  list, release-please `extra-files`, and the manifest together.
+
+When making changes that warrant a version bump, use conventional commit
+messages (e.g. `feat:`, `fix:`, `chore:`) so release-please can generate
+appropriate changelogs and version bumps.
 
 ## Common Pitfalls
 
-- Do not use npm or pnpm.
-- Do not remove the root `cssom` resolution to `rrweb-cssom`. It affects
+- Do not use yarn or pnpm.
+- Do not remove the root `cssom` override to `rrweb-cssom`. It affects
   `rrdom-nodejs` CSS parsing.
 - Do not reintroduce upstream GitHub Actions workflows unless requested.
 - Do not weaken sandbox checks to make tests pass. The strict browser
@@ -590,8 +611,14 @@ This runs `yarn build:all` and then `changeset publish`.
 - Do not assume every package has a `.ts` Vite config. Some core packages
   use `vite.config.js`.
 - Do not assume all tests are Vitest. `rrvideo` uses Jest.
-- Do not update broad README sponsor or generated sections while making code
-  changes.
+- Do not restore upstream README content into `README.md`. The original
+  lives in `UPSTREAM_README.md`.
+- Do not manually edit version numbers. Release-please manages versions
+  across all packages.
+- Do not remove `.npmrc` or its `legacy-peer-deps=true` setting unless the
+  task explicitly changes dependency resolution.
+- Do not add dependencies with licenses incompatible with the dependency
+  review allowlist. The CI will block the PR.
 
 ## When Changing Public APIs
 
@@ -606,7 +633,8 @@ Update all relevant places:
   exports change.
 - Docs in `guide.md`, package READMEs, or `docs/`.
 - Tests and snapshots.
-- Changeset.
+
+Use conventional commit messages so release-please picks up the change.
 
 ## Before Finishing a Task
 
@@ -616,16 +644,16 @@ behavior changes, also run root checks.
 Typical final validation for core changes:
 
 ```sh
-yarn check-types
-yarn lint
-yarn test
+npm run check-types
+npm run lint
+npm test
 ```
 
 For security-sensitive replay or rebuild changes, also run:
 
 ```sh
-cd packages/rrweb-snapshot && yarn test
-cd packages/rrweb && PUPPETEER_HEADLESS=true yarn vitest run test/replayer.test.ts
+cd packages/rrweb-snapshot && npm test
+cd packages/rrweb && PUPPETEER_HEADLESS=true npx vitest run test/replayer.test.ts
 ```
 
 Report which commands ran and any commands that could not be run.
@@ -641,10 +669,10 @@ Changes that require an update to this file include:
 - Changing the build system, test framework, or tooling.
 - Adding new event types or modifying the event schema.
 - Changing security boundaries or sandbox behavior.
-- Modifying the package manager, dependency resolutions, or workspace
+- Modifying the package manager, dependency overrides, or workspace
   structure.
 - Adding new conventions, naming patterns, or lint rules.
-- Changing CI/CD, release process, or changeset configuration.
+- Changing CI/CD, release process, or workflow configuration.
 - Adding new entry points or significantly restructuring source directories.
 
 If you are an AI agent and you notice this file is out of date with respect
