@@ -560,6 +560,9 @@ Renovate (`.github/renovate.json`) handles automated dependency updates:
 - 7-day minimum release age for supply chain protection.
 - OSV vulnerability alerts enabled with priority labeling.
 
+PR titles are linted by CI and must follow conventional commit format
+(e.g. `feat: add X`, `fix: resolve Y`, `chore: update Z`).
+
 Do not reintroduce upstream GitHub Actions workflows unless specifically
 asked. The fork maintains its own CI configuration. Keep any new workflow
 actions pinned by SHA.
