@@ -27,9 +27,16 @@
       "groupName": "github-actions"
     },
     {
-      "description": "Group patch updates together",
+      "description": "Group npm patch updates",
+      "matchManagers": ["npm"],
       "matchUpdateTypes": ["patch"],
-      "groupName": "patch updates"
+      "groupName": "npm patch updates"
+    },
+    {
+      "description": "Group GitHub Actions patch updates",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "github-actions patch updates"
     }
   ]
 }
