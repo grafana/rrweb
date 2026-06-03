@@ -6,6 +6,7 @@
   "separate-pull-requests": false,
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
+  "versioning": "prerelease",
   "prerelease": true,
   "prerelease-type": "alpha",
   "pull-request-header": "rrweb Release - ${version}",
