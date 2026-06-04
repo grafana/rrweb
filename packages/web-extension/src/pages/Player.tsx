@@ -1,7 +1,7 @@
 /// <reference types="chrome"/>
 import { useRef, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import Replayer from 'rrweb-player';
+import Replayer from '@grafana/rrweb-player';
 import {
   Box,
   Breadcrumb,
