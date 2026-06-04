@@ -1,6 +1,9 @@
 {
   "name": "@grafana/rrweb-player",
   "version": "2.0.0-alpha.20.grafana.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@grafana/rrweb-types": "^2.0.0-alpha.20.grafana.0",
     "@sveltejs/adapter-auto": "^3.0.0",
