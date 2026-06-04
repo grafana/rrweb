@@ -11,13 +11,9 @@ jobs:
   test:
     permissions:
       contents: read
-    name: Test (Node ${{ matrix.node }})
+    name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [22.x, 24.x]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -26,7 +22,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
         with:
-          node-version: ${{ matrix.node }}
+          node-version-file: .nvmrc
 
       - name: Upgrade npm
         run: npm install -g npm@latest
