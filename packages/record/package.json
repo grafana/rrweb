@@ -6,7 +6,7 @@
   },
   "keywords": [
     "rrweb",
-    "@rrweb/record"
+    "@grafana/rrweb-record"
   ],
   "scripts": {
     "dev": "vite build --watch",

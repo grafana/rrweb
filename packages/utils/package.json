@@ -6,7 +6,7 @@
   },
   "keywords": [
     "rrweb",
-    "@rrweb/utils"
+    "@grafana/rrweb-utils"
   ],
   "scripts": {
     "dev": "vite build --watch",
