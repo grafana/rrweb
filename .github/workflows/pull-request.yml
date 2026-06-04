@@ -31,7 +31,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Install Chromium for Puppeteer
-        run: npx puppeteer browsers install chrome
+        run: node node_modules/puppeteer/install.mjs
 
       - name: Build
         run: npm run build:all
