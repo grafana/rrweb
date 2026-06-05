@@ -116,6 +116,7 @@ export function getUntaintedPrototype<T extends keyof BasePrototypeCache>(
     // Keep the iframe attached so its context stays live, and expose a cleanup fn.
     const ua = navigator.userAgent;
     if (ua.includes('Safari') && !ua.includes('Chrome')) {
+      // rr-block prevents rrweb from serializing this iframe in subsequent snapshots
       iframeEl.classList.add('rr-block');
       iframeEl.setAttribute('__rrwebUntaintedMutationObserver', '');
       untaintedBaseIframeCleanup[key] = () => iframeEl.remove();
