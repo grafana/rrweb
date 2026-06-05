@@ -14,6 +14,7 @@ import type { Mirror, SlimDOMOptions } from '@grafana/rrweb-snapshot';
 import { isShadowRoot, IGNORED_NODE, classMatchesRegex } from '@grafana/rrweb-snapshot';
 import { RRNode, RRIFrameElement, BaseRRNode } from '@grafana/rrdom';
 import dom from '@grafana/rrweb-utils';
+export { nowTimestamp } from '@grafana/rrweb-utils';
 
 export function on(
   type: string,
@@ -126,15 +127,6 @@ export function hookSetter<T>(
   );
   return () => hookSetter(target, key, original || {}, true);
 }
-
-// guard against old third party libraries which redefine Date.now
-let nowTimestamp = Date.now;
-
-if (!(/*@__PURE__*/ /[1-9][0-9]{12}/.test(Date.now().toString()))) {
-  // they have already redefined it! use a fallback
-  nowTimestamp = () => new Date().getTime();
-}
-export { nowTimestamp };
 
 export function getWindowScroll(win: Window) {
   const doc = win.document;
