@@ -31,7 +31,14 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Install Chromium for Puppeteer
-        run: node node_modules/puppeteer/install.js
+        run: |
+          node node_modules/puppeteer/install.js
+          if [ -f packages/rrweb/node_modules/puppeteer/install.js ]; then
+            node packages/rrweb/node_modules/puppeteer/install.js
+          fi
+          if [ -f packages/rrweb-snapshot/node_modules/puppeteer/install.js ]; then
+            node packages/rrweb-snapshot/node_modules/puppeteer/install.js
+          fi
 
       - name: Build
         run: npm run build:all
