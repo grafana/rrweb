@@ -27,6 +27,10 @@ module.exports = {
     es2017: true,
     node: true,
   },
+  rules: {
+    'no-fallthrough': 'warn',
+    'svelte/valid-compile': 'warn',
+  },
   overrides: [
     {
       files: ['*.svelte'],
