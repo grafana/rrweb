@@ -26,4 +26,4 @@ jobs:
             Artistic-2.0
           allow-dependencies-licenses: >-
             pkg:githubactions/grafana/shared-workflows/actions/lint-pr-title,
-            pkg:githubactions/grafana/shared-workflows/actions/get-vault-secrets
+            pkg:githubactions/grafana/shared-workflows/actions/create-github-app-token
