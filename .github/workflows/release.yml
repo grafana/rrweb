@@ -67,6 +67,7 @@ jobs:
         uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
         with:
           node-version-file: .nvmrc
+          package-manager-cache: false
 
       - name: Upgrade npm
         if: ${{ steps.release.outputs.prs_created == 'true' && steps.release-branch.outputs.branch != '' && steps.release-branch.outputs.branch != 'null' }}
@@ -123,6 +124,7 @@ jobs:
         uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
         with:
           node-version-file: .nvmrc
+          package-manager-cache: false
 
       - name: Upgrade npm
         run: npm install -g npm@11.12.1
@@ -183,6 +185,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
 
       - name: Upgrade npm
         run: npm install -g npm@11.12.1
@@ -209,8 +212,15 @@ jobs:
               return 0
             fi
 
+            local tag_flag=""
+            if [[ "$version" == *-alpha* ]]; then
+              tag_flag="--tag alpha"
+            elif [[ "$version" == *-beta* ]]; then
+              tag_flag="--tag beta"
+            fi
+
             echo "Publishing $name@$version..."
-            (cd "$pkg" && npm publish --provenance --access public)
+            (cd "$pkg" && npm publish --provenance --access public $tag_flag)
           }
 
           failed=0
