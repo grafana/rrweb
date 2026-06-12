@@ -163,7 +163,7 @@ jobs:
     needs: [release-please, test]
     if: ${{ needs.release-please.outputs.releases_created == 'true' }}
     timeout-minutes: 15
-    environment: publish # Hardening: protect this environment with required reviewers + branch restriction
+    environment: npm-publish # Hardening: protect this environment with required reviewers + branch restriction
 
     env:
       NPM_CONFIG_ACCESS: public
