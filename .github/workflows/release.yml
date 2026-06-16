@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     branches:
-      - master
+      - main
 
 # Hardening: default to read-only at the workflow level; jobs elevate id-token only where OIDC is needed.
 permissions:
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     timeout-minutes: 15
     permissions:
       contents: read
@@ -44,7 +44,7 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-          target-branch: master
+          target-branch: main
 
       - name: Resolve release PR branch
         id: release-branch
