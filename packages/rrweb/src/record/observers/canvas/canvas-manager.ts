@@ -101,6 +101,7 @@ export class CanvasManager {
     target,
     mutation,
   ) => {
+    if (this.stopped) return;
     const newFrame =
       this.rafStamps.invokeId &&
       this.rafStamps.latestId !== this.rafStamps.invokeId;
