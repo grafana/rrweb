@@ -278,10 +278,14 @@ function diffAfterUpdatingChildren(
         // Props of style elements have to be updated after all children are updated. Otherwise the props can be overwritten by textContent.
         case 'STYLE': {
           const styleSheet = (oldElement as HTMLStyleElement).sheet;
-          styleSheet &&
-            (newTree as RRStyleElement).rules.forEach((data) =>
+          if (styleSheet) {
+            const rrStyle = newTree as RRStyleElement;
+            const unflushed = rrStyle.rules.slice(rrStyle.rulesFlushedIndex);
+            unflushed.forEach((data) =>
               replayer.applyStyleSheetMutation(data, styleSheet),
             );
+            rrStyle.rulesFlushedIndex = rrStyle.rules.length;
+          }
           break;
         }
         case 'DIALOG': {

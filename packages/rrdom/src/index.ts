@@ -169,6 +169,7 @@ export class RRCanvasElement extends RRElement implements IRRElement {
 
 export class RRStyleElement extends RRElement {
   public rules: (styleSheetRuleData | styleDeclarationData)[] = [];
+  public rulesFlushedIndex = 0;
 }
 
 export class RRIFrameElement extends RRElement {
