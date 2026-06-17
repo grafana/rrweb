@@ -143,6 +143,7 @@ function diffBeforeUpdatingChildren(
       rrnodeMirror,
     );
     oldTree.parentNode?.replaceChild(calibratedOldTree, oldTree);
+    replayer.mirror.removeNodeFromMap(oldTree);
     oldTree = calibratedOldTree;
   }
   switch (newTree.RRNodeType) {
