@@ -337,23 +337,22 @@ function diffProps(
   const oldAttributes = oldTree.attributes;
   const newAttributes = newTree.attributes;
 
+  const sn = rrnodeMirror.getMeta(newTree) as elementNode | null;
   for (const name in newAttributes) {
     const newValue = newAttributes[name];
-    const sn = rrnodeMirror.getMeta(newTree) as elementNode | null;
     if (sn?.isSVG && NAMESPACES[name]) {
-      if (oldTree.getAttributeNS(NAMESPACES[name], name) !== newValue)
+      const localName = name.includes(':') ? name.split(':')[1] : name;
+      if (oldTree.getAttributeNS(NAMESPACES[name], localName) !== newValue)
         oldTree.setAttributeNS(NAMESPACES[name], name, newValue);
     } else if (newTree.tagName === 'CANVAS' && name === 'rr_dataURL') {
-      if (oldTree.getAttribute(name) !== newValue) {
-        const image = document.createElement('img');
-        image.src = newValue;
-        image.onload = () => {
-          const ctx = (oldTree as HTMLCanvasElement).getContext('2d');
-          if (ctx) {
-            ctx.drawImage(image, 0, 0, image.width, image.height);
-          }
-        };
-      }
+      const image = document.createElement('img');
+      image.src = newValue;
+      image.onload = () => {
+        const ctx = (oldTree as HTMLCanvasElement).getContext('2d');
+        if (ctx) {
+          ctx.drawImage(image, 0, 0, image.width, image.height);
+        }
+      };
     } else if (newTree.tagName === 'IFRAME' && name === 'srcdoc') continue;
     else if (oldTree.getAttribute(name) !== newValue) {
       try {
