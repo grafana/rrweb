@@ -254,6 +254,16 @@ export default class MutationBuffer {
   public reset() {
     this.shadowDomManager.reset();
     this.canvasManager.reset();
+    this.texts = [];
+    this.attributes = [];
+    this.attributeMap = new WeakMap();
+    this.removes = [];
+    this.mapRemoves = [];
+    this.movedMap = {};
+    this.addedSet = new Set();
+    this.movedSet = new Set();
+    this.droppedSet = new Set();
+    this.removesSubTreeCache = new Set();
   }
 
   public processMutations = (mutations: mutationRecord[]) => {
