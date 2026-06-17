@@ -1463,7 +1463,7 @@ export class Replayer {
             parent.nodeName === 'STYLE' &&
             (parent as RRStyleElement).rules?.length > 0
           )
-            (parent as RRStyleElement).rules = [];
+            (parent as RRStyleElement).clearRules();
         } catch (error) {
           if (error instanceof DOMException) {
             this.warn(
@@ -1682,7 +1682,7 @@ export class Replayer {
         parent.nodeName === 'STYLE' &&
         (parent as RRStyleElement).rules?.length > 0
       )
-        (parent as RRStyleElement).rules = [];
+        (parent as RRStyleElement).clearRules();
 
       if (isSerializedIframe(target, this.mirror)) {
         const targetId = this.mirror.getId(target as HTMLIFrameElement);
@@ -1769,7 +1769,7 @@ export class Replayer {
        */
       if (this.usingVirtualDom) {
         const parent = target.parentNode as RRStyleElement;
-        if (parent?.rules?.length > 0) parent.rules = [];
+        if (parent?.rules?.length > 0) parent.clearRules();
       }
     });
     d.attributes.forEach((mutation) => {
