@@ -288,7 +288,9 @@ function diffAfterUpdatingChildren(
           const dialog = oldElement as HTMLDialogElement;
           const rrDialog = newRRElement as unknown as RRDialogElement;
           const wasOpen = dialog.open;
-          const wasModal = dialog.matches('dialog:modal');
+          const wasModal =
+            typeof dialog.matches === 'function' &&
+            dialog.matches('dialog:modal');
           const shouldBeOpen = rrDialog.open;
           const shouldBeModal = rrDialog.isModal;
 
