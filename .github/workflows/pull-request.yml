@@ -29,18 +29,23 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
 
-      - name: Install Puppeteer browsers
+      - name: Read Puppeteer browser revision
+        id: puppeteer-browser
         run: |
-          for install in $(find . -path '*/puppeteer/install.js' -not -path '*/puppeteer/node_modules/*'); do
-            echo "Running $install"
-            node "$install"
-          done
+          revision=$(node -p "require('./.puppeteerrc.cjs').browserRevision")
+          echo "revision=${revision}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Chrome
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@2e1d749697dd1612b833dba4a722266286fbefcd # v2.1.2
+        with:
+          chrome-version: ${{ steps.puppeteer-browser.outputs.revision }}
 
       - name: Install Playwright browsers
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
         timeout-minutes: 5
 
       - name: Build
@@ -56,3 +61,4 @@ jobs:
         run: npm test
         env:
           PUPPETEER_HEADLESS: 'true'
+          PUPPETEER_EXECUTABLE_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
