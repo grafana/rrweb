@@ -3,6 +3,14 @@
 exports[`rrweb-plugin-console-record > should handle recursive console messages 1`] = `
 "[
   {
+    \\"type\\": 0,
+    \\"data\\": {}
+  },
+  {
+    \\"type\\": 1,
+    \\"data\\": {}
+  },
+  {
     \\"type\\": 4,
     \\"data\\": {
       \\"href\\": \\"about:blank\\",
@@ -186,6 +194,14 @@ exports[`rrweb-plugin-console-record > should handle recursive console messages 
 
 exports[`rrweb-plugin-console-record > should record console messages 1`] = `
 "[
+  {
+    \\"type\\": 0,
+    \\"data\\": {}
+  },
+  {
+    \\"type\\": 1,
+    \\"data\\": {}
+  },
   {
     \\"type\\": 4,
     \\"data\\": {

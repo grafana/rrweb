@@ -1091,28 +1091,29 @@ exports[`record > captures adopted stylesheets in shadow doms and iframe 1`] = `
           \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 2,
-            \\"tagName\\": \\"span\\",
+            \\"tagName\\": \\"div\\",
             \\"attributes\\": {},
             \\"childNodes\\": [],
             \\"id\\": 26,
             \\"isShadow\\": true
-          }
+          },
+          \\"previousId\\": null
         },
         {
           \\"parentId\\": 26,
           \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 3,
-            \\"textContent\\": \\"span in shadow dom 2\\",
+            \\"textContent\\": \\"div in shadow dom 2\\",
             \\"id\\": 27
           }
         },
         {
           \\"parentId\\": 16,
-          \\"nextId\\": 26,
+          \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 2,
-            \\"tagName\\": \\"div\\",
+            \\"tagName\\": \\"span\\",
             \\"attributes\\": {},
             \\"childNodes\\": [],
             \\"id\\": 28,
@@ -1124,7 +1125,7 @@ exports[`record > captures adopted stylesheets in shadow doms and iframe 1`] = `
           \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 3,
-            \\"textContent\\": \\"div in shadow dom 2\\",
+            \\"textContent\\": \\"span in shadow dom 2\\",
             \\"id\\": 29
           }
         }
@@ -1459,16 +1460,17 @@ exports[`record > captures inserted style text nodes correctly 1`] = `
           \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 3,
-            \\"textContent\\": \\"h1 { color: pink; }\\",
+            \\"textContent\\": \\"span { color: orange; }\\",
             \\"id\\": 12
-          }
+          },
+          \\"previousId\\": 7
         },
         {
           \\"parentId\\": 5,
-          \\"nextId\\": 12,
+          \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 3,
-            \\"textContent\\": \\"span { color: orange; }\\",
+            \\"textContent\\": \\"h1 { color: pink; }\\",
             \\"id\\": 13
           }
         }
