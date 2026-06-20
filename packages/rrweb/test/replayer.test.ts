@@ -34,6 +34,7 @@ import styleDeclarationMissingRuleEvents from './events/style-declaration-missin
 import documentReplacementEvents from './events/document-replacement';
 import hoverInIframeShadowDom from './events/iframe-shadowdom-hover';
 import customElementDefineClass from './events/custom-element-define-class';
+import missingNextIdEvents from './events/missing-next-id';
 import { ReplayerEvents } from '@grafana/rrweb-types';
 
 interface ISuite {
@@ -949,6 +950,29 @@ describe('replayer', function () {
     await page.waitForTimeout(50);
 
     await assertDomSnapshot(page);
+  });
+
+  it('should not hang when nextId is missing from the mirror', async () => {
+    await page.evaluate(`events = ${JSON.stringify(missingNextIdEvents)}`);
+    const result = await page.evaluate(`
+      const { Replayer } = rrweb;
+      const replayer = new Replayer(events);
+      replayer.play();
+      new Promise((resolve) => {
+        setTimeout(() => {
+          const iframe = replayer.iframe;
+          const span = iframe.contentDocument.querySelector('span');
+          resolve({
+            spanExists: !!span,
+            parentCorrect: span?.parentElement?.id !== undefined,
+          });
+        }, 100);
+      });
+    `);
+    expect(result).toEqual({
+      spanExists: true,
+      parentCorrect: true,
+    });
   });
 
   it('should destroy the replayer after calling destroy()', async () => {
