@@ -14,6 +14,7 @@ export interface ImageBitmapDataURLRequestWorker {
     transfer?: [ImageBitmap],
   ) => void;
   onmessage: (message: MessageEvent<ImageBitmapDataURLWorkerResponse>) => void;
+  terminate: () => void;
 }
 
 interface ImageBitmapDataURLResponseWorker {

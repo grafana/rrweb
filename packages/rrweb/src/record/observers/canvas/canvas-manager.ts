@@ -34,8 +34,30 @@ export class CanvasManager {
   private resetObservers?: listenerHandler;
   private frozen = false;
   private locked = false;
+  private stopped = false;
+  private flushRafId: number | null = null;
+  private timestampRafId: number | null = null;
+  private worker: ImageBitmapDataURLRequestWorker | null = null;
+  private snapshotInProgressMap: Map<number, boolean> | null = null;
 
   public reset() {
+    this.stopped = true;
+    if (this.flushRafId !== null) {
+      cancelAnimationFrame(this.flushRafId);
+      this.flushRafId = null;
+    }
+    if (this.timestampRafId !== null) {
+      cancelAnimationFrame(this.timestampRafId);
+      this.timestampRafId = null;
+    }
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    if (this.snapshotInProgressMap) {
+      this.snapshotInProgressMap.clear();
+      this.snapshotInProgressMap = null;
+    }
     this.pendingCanvasMutations.clear();
     this.resetObservers && this.resetObservers();
   }
@@ -89,6 +111,7 @@ export class CanvasManager {
     target,
     mutation,
   ) => {
+    if (this.stopped) return;
     const newFrame =
       this.rafStamps.invokeId &&
       this.rafStamps.latestId !== this.rafStamps.invokeId;
@@ -117,9 +140,11 @@ export class CanvasManager {
       blockSelector,
       true,
     );
-    const snapshotInProgressMap: Map<number, boolean> = new Map();
-    const worker =
+    this.snapshotInProgressMap = new Map();
+    const snapshotInProgressMap = this.snapshotInProgressMap;
+    this.worker =
       new ImageBitmapDataURLWorker() as ImageBitmapDataURLRequestWorker;
+    const worker = this.worker;
     worker.onmessage = (e) => {
       const { id } = e.data;
       snapshotInProgressMap.set(id, false);
@@ -171,6 +196,7 @@ export class CanvasManager {
     };
 
     const takeCanvasSnapshots = (timestamp: DOMHighResTimeStamp) => {
+      if (this.stopped) return;
       if (
         lastSnapshotTime &&
         timestamp - lastSnapshotTime < timeBetweenSnapshots
@@ -187,44 +213,42 @@ export class CanvasManager {
           if (snapshotInProgressMap.get(id)) return;
 
           // The browser throws if the canvas is 0 in size
-          // Uncaught (in promise) DOMException: Failed to execute 'createImageBitmap' on 'Window': The source image width is 0.
-          // Assuming the same happens with height
           if (canvas.width === 0 || canvas.height === 0) return;
 
           snapshotInProgressMap.set(id, true);
           if (['webgl', 'webgl2'].includes((canvas as ICanvas).__context)) {
-            // if the canvas hasn't been modified recently,
-            // its contents won't be in memory and `createImageBitmap`
-            // will return a transparent imageBitmap
-
             const context = canvas.getContext((canvas as ICanvas).__context) as
               | WebGLRenderingContext
               | WebGL2RenderingContext
               | null;
+            if (context?.isContextLost()) {
+              snapshotInProgressMap.set(id, false);
+              return;
+            }
             if (
               context?.getContextAttributes()?.preserveDrawingBuffer === false
             ) {
               // Hack to load canvas back into memory so `createImageBitmap` can grab it's contents.
               // Context: https://twitter.com/Juice10/status/1499775271758704643
-              // Preferably we set `preserveDrawingBuffer` to true, but that's not always possible,
-              // especially when canvas is loaded before rrweb.
-              // This hack can wipe the background color of the canvas in the (unlikely) event that
-              // the canvas background was changed but clear was not called directly afterwards.
-              // Example of this hack having negative side effect: https://visgl.github.io/react-map-gl/examples/layers
               context.clear(context.COLOR_BUFFER_BIT);
             }
           }
-          const bitmap = await createImageBitmap(canvas);
-          worker.postMessage(
-            {
-              id,
-              bitmap,
-              width: canvas.width,
-              height: canvas.height,
-              dataURLOptions: options.dataURLOptions,
-            },
-            [bitmap],
-          );
+          try {
+            const bitmap = await createImageBitmap(canvas);
+            if (this.stopped) return;
+            worker.postMessage(
+              {
+                id,
+                bitmap,
+                width: canvas.width,
+                height: canvas.height,
+                dataURLOptions: options.dataURLOptions,
+              },
+              [bitmap],
+            );
+          } catch {
+            snapshotInProgressMap.set(id, false);
+          }
         });
       rafId = requestAnimationFrame(takeCanvasSnapshots);
     };
@@ -234,6 +258,8 @@ export class CanvasManager {
     this.resetObservers = () => {
       canvasContextReset();
       cancelAnimationFrame(rafId);
+      worker.terminate();
+      snapshotInProgressMap.clear();
     };
   }
 
@@ -273,15 +299,18 @@ export class CanvasManager {
   }
 
   private startPendingCanvasMutationFlusher() {
-    requestAnimationFrame(() => this.flushPendingCanvasMutations());
+    this.flushRafId = requestAnimationFrame(() =>
+      this.flushPendingCanvasMutations(),
+    );
   }
 
   private startRAFTimestamping() {
     const setLatestRAFTimestamp = (timestamp: DOMHighResTimeStamp) => {
       this.rafStamps.latestId = timestamp;
-      requestAnimationFrame(setLatestRAFTimestamp);
+      if (this.stopped) return;
+      this.timestampRafId = requestAnimationFrame(setLatestRAFTimestamp);
     };
-    requestAnimationFrame(setLatestRAFTimestamp);
+    this.timestampRafId = requestAnimationFrame(setLatestRAFTimestamp);
   }
 
   flushPendingCanvasMutations() {
@@ -291,7 +320,10 @@ export class CanvasManager {
         this.flushPendingCanvasMutationFor(canvas, id);
       },
     );
-    requestAnimationFrame(() => this.flushPendingCanvasMutations());
+    if (this.stopped) return;
+    this.flushRafId = requestAnimationFrame(() =>
+      this.flushPendingCanvasMutations(),
+    );
   }
 
   flushPendingCanvasMutationFor(canvas: HTMLCanvasElement, id: number) {
