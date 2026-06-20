@@ -99,6 +99,7 @@ function record<T = eventWithTime>(
     keepIframeSrcFn = () => false,
     ignoreCSSAttributes = new Set([]),
     errorHandler,
+    checkoutIfSmallInitialSnapshot = 200,
   } = options;
 
   registerErrorHandler(errorHandler);
@@ -166,6 +167,18 @@ function record<T = eventWithTime>(
 
   let lastFullSnapshotEvent: eventWithTime;
   let incrementalSnapshotCount = 0;
+  let qualityCheckoutScheduled = false;
+  const ORPHAN_RESNAPSHOT_COOLDOWN_MS = 5000;
+  let lastOrphanSnapshotTime = 0;
+  const onOrphansDropped = () => {
+    const now = nowTimestamp();
+    if (now - lastOrphanSnapshotTime >= ORPHAN_RESNAPSHOT_COOLDOWN_MS) {
+      lastOrphanSnapshotTime = now;
+      setTimeout(() => {
+        if (recording) takeFullSnapshot(true);
+      }, 0);
+    }
+  };
 
   const eventProcessor = (e: eventWithTime): T => {
     for (const plugin of plugins || []) {
@@ -213,6 +226,14 @@ function record<T = eventWithTime>(
     if (e.type === EventType.FullSnapshot) {
       lastFullSnapshotEvent = e;
       incrementalSnapshotCount = 0;
+
+      if (
+        !qualityCheckoutScheduled &&
+        checkoutIfSmallInitialSnapshot &&
+        mirror.getIds().length < checkoutIfSmallInitialSnapshot
+      ) {
+        qualityCheckoutScheduled = true;
+      }
     } else if (e.type === EventType.IncrementalSnapshot) {
       // attach iframe should be considered as full snapshot
       if (
@@ -223,6 +244,18 @@ function record<T = eventWithTime>(
       }
 
       incrementalSnapshotCount++;
+
+      if (
+        qualityCheckoutScheduled &&
+        checkoutIfSmallInitialSnapshot &&
+        mirror.getIds().length >= checkoutIfSmallInitialSnapshot
+      ) {
+        qualityCheckoutScheduled = false;
+        setTimeout(() => {
+          if (recording) takeFullSnapshot(true);
+        }, 0);
+      }
+
       const exceedCount =
         checkoutEveryNth && incrementalSnapshotCount >= checkoutEveryNth;
       const exceedTime =
@@ -330,6 +363,7 @@ function record<T = eventWithTime>(
       canvasManager,
       keepIframeSrcFn,
       processedNodeManager,
+      onOrphansDropped,
     },
     mirror,
   });
@@ -534,6 +568,7 @@ function record<T = eventWithTime>(
           processedNodeManager,
           canvasManager,
           ignoreCSSAttributes,
+          onOrphansDropped,
           plugins:
             plugins
               ?.filter((p) => p.observer)
@@ -568,7 +603,10 @@ function record<T = eventWithTime>(
       handlers.push(observe(document));
       recording = true;
     };
-    if (['interactive', 'complete'].includes(document.readyState)) {
+    if (
+      document.readyState === 'complete' ||
+      (document.readyState === 'interactive' && recordAfter === 'DOMContentLoaded')
+    ) {
       init();
     } else {
       handlers.push(

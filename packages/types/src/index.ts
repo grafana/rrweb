@@ -329,7 +329,7 @@ export type removedNodeMutation = {
 
 export type addedNodeMutation = {
   parentId: number;
-  // Newly recorded mutations will not have previousId any more, just for compatibility
+  // Emitted when the next sibling is not yet mirrored (previousId-anchored append)
   previousId?: number | null;
   nextId: number | null;
   node: serializedNodeWithId;

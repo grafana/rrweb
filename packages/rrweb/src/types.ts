@@ -82,6 +82,12 @@ export type recordOptions<T> = {
   mousemoveWait?: number;
   keepIframeSrcFn?: KeepIframeSrcFn;
   errorHandler?: ErrorHandler;
+  /**
+   * If the initial full snapshot has fewer serialized nodes than this
+   * threshold, schedule a deferred checkout after 100ms to capture
+   * the fully-rendered SPA DOM. Set to 0 or false to disable.
+   */
+  checkoutIfSmallInitialSnapshot?: number | false;
 };
 
 export type observerParam = {
@@ -125,6 +131,7 @@ export type observerParam = {
   canvasManager: CanvasManager;
   processedNodeManager: ProcessedNodeManager;
   ignoreCSSAttributes: Set<string>;
+  onOrphansDropped?: (count: number) => void;
   plugins: Array<{
     observer: (
       cb: (...arg: Array<unknown>) => void,
@@ -159,6 +166,7 @@ export type MutationBufferParam = Pick<
   | 'shadowDomManager'
   | 'canvasManager'
   | 'processedNodeManager'
+  | 'onOrphansDropped'
 >;
 
 export type ReplayPlugin = {
