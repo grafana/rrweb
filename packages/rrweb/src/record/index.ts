@@ -615,6 +615,7 @@ function record<T = eventWithTime>(
         }
       });
       processedNodeManager.destroy();
+      iframeManager.reset();
       recording = false;
       unregisterErrorHandler();
     };

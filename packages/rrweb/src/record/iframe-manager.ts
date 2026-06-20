@@ -25,6 +25,10 @@ export class IframeManager {
   private loadListener?: (iframeEl: HTMLIFrameElement) => unknown;
   private stylesheetManager: StylesheetManager;
   private recordCrossOriginIframes: boolean;
+  private boundHandleMessage: (
+    message: MessageEvent | CrossOriginIframeMessageEvent,
+  ) => void;
+  private messageListenerTargets: Window[] = [];
 
   constructor(options: {
     mirror: Mirror;
@@ -43,8 +47,9 @@ export class IframeManager {
       ),
     );
     this.mirror = options.mirror;
+    this.boundHandleMessage = this.handleMessage.bind(this);
     if (this.recordCrossOriginIframes) {
-      window.addEventListener('message', this.handleMessage.bind(this));
+      window.addEventListener('message', this.boundHandleMessage);
     }
   }
 
@@ -77,11 +82,13 @@ export class IframeManager {
     });
 
     // Receive messages (events) coming from cross-origin iframes that are nested in this same-origin iframe.
-    if (this.recordCrossOriginIframes)
-      iframeEl.contentWindow?.addEventListener(
+    if (this.recordCrossOriginIframes && iframeEl.contentWindow) {
+      iframeEl.contentWindow.addEventListener(
         'message',
-        this.handleMessage.bind(this),
+        this.boundHandleMessage,
       );
+      this.messageListenerTargets.push(iframeEl.contentWindow);
+    }
 
     this.loadListener?.(iframeEl);
 
@@ -95,6 +102,23 @@ export class IframeManager {
         this.mirror.getId(iframeEl.contentDocument),
       );
   }
+  public reset() {
+    window.removeEventListener('message', this.boundHandleMessage);
+    for (const win of this.messageListenerTargets) {
+      try {
+        win.removeEventListener('message', this.boundHandleMessage);
+      } catch {
+        // iframe may have become cross-origin
+      }
+    }
+    this.messageListenerTargets = [];
+    this.crossOriginIframeMirror.reset();
+    this.crossOriginIframeStyleMirror.reset();
+    this.iframes = new WeakMap();
+    this.crossOriginIframeMap = new WeakMap();
+    this.crossOriginIframeRootIdMap = new WeakMap();
+  }
+
   private handleMessage(message: MessageEvent | CrossOriginIframeMessageEvent) {
     const crossOriginMessageEvent = message as CrossOriginIframeMessageEvent;
     if (
