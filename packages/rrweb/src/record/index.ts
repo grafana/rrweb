@@ -603,10 +603,7 @@ function record<T = eventWithTime>(
       handlers.push(observe(document));
       recording = true;
     };
-    if (
-      document.readyState === 'complete' ||
-      (document.readyState === 'interactive' && recordAfter === 'DOMContentLoaded')
-    ) {
+    if (['interactive', 'complete'].includes(document.readyState)) {
       init();
     } else {
       handlers.push(
