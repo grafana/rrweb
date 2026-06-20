@@ -25,8 +25,10 @@ import {
   RRCanvasElement,
   RRDocument,
   RRElement,
+  RRIFrameElement,
   BaseRRNode as RRNode,
 } from '../src';
+import type { IRRNode } from '../src/document';
 
 const printRRDomCode = `
 /**
@@ -444,6 +446,49 @@ describe('RRDocument for browser environment', () => {
         dom.mirror.removeNodeFromMap(node1);
         expect(dom.mirror.has(0)).toBeFalsy();
         expect(dom.mirror.has(1)).toBeFalsy();
+      });
+
+      it('can remove shadow root children from the mirror', () => {
+        const dom = new RRDocument();
+        const host = dom.createElement('div');
+        dom.mirror.add(host, getDefaultSN(host, 10));
+        const shadowRoot = host.attachShadow({ mode: 'open' });
+        dom.mirror.add(
+          shadowRoot as unknown as RRNode,
+          getDefaultSN(shadowRoot as unknown as IRRNode, 11),
+        );
+        const shadowChild = dom.createElement('span');
+        dom.mirror.add(shadowChild, getDefaultSN(shadowChild, 12));
+        shadowRoot.appendChild(shadowChild);
+
+        expect(dom.mirror.has(10)).toBeTruthy();
+        expect(dom.mirror.has(11)).toBeTruthy();
+        expect(dom.mirror.has(12)).toBeTruthy();
+
+        dom.mirror.removeNodeFromMap(host);
+        expect(dom.mirror.has(10)).toBeFalsy();
+        expect(dom.mirror.has(11)).toBeFalsy();
+        expect(dom.mirror.has(12)).toBeFalsy();
+      });
+
+      it('can remove iframe content document children from the mirror', () => {
+        const dom = new RRDocument();
+        const iframe = dom.createElement('iframe') as RRIFrameElement;
+        dom.mirror.add(iframe, getDefaultSN(iframe, 20));
+        const iframeDoc = iframe.contentDocument;
+        dom.mirror.add(iframeDoc, getDefaultSN(iframeDoc, 21));
+        const body = dom.createElement('body');
+        dom.mirror.add(body, getDefaultSN(body, 22));
+        iframeDoc.appendChild(body);
+
+        expect(dom.mirror.has(20)).toBeTruthy();
+        expect(dom.mirror.has(21)).toBeTruthy();
+        expect(dom.mirror.has(22)).toBeTruthy();
+
+        dom.mirror.removeNodeFromMap(iframe);
+        expect(dom.mirror.has(20)).toBeFalsy();
+        expect(dom.mirror.has(21)).toBeFalsy();
+        expect(dom.mirror.has(22)).toBeFalsy();
       });
 
       it('can reset the mirror', () => {

@@ -225,6 +225,18 @@ export class Mirror implements IMirror<Node> {
         this.removeNodeFromMap(childNode as unknown as Node),
       );
     }
+    if (n.nodeType === n.ELEMENT_NODE) {
+      const sr = (n as Element).shadowRoot;
+      if (sr) this.removeNodeFromMap(sr);
+    }
+    if (n.nodeName === 'IFRAME') {
+      try {
+        const doc = (n as HTMLIFrameElement).contentDocument;
+        if (doc) this.removeNodeFromMap(doc);
+      } catch {
+        // Cross-origin iframes may throw SecurityError
+      }
+    }
   }
   has(id: number): boolean {
     return this.idNodeMap.has(id);

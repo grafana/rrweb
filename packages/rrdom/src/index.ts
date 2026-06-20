@@ -375,6 +375,12 @@ export class Mirror implements IMirror<RRNode> {
     if (n.childNodes) {
       n.childNodes.forEach((childNode) => this.removeNodeFromMap(childNode));
     }
+    if (n instanceof BaseRRElement && n.shadowRoot) {
+      this.removeNodeFromMap(n.shadowRoot as unknown as RRNode);
+    }
+    if (n instanceof RRIFrameElement) {
+      this.removeNodeFromMap(n.contentDocument as unknown as RRNode);
+    }
   }
   has(id: number): boolean {
     return this.idNodeMap.has(id);
