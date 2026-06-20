@@ -99,6 +99,7 @@ function record<T = eventWithTime>(
     keepIframeSrcFn = () => false,
     ignoreCSSAttributes = new Set([]),
     errorHandler,
+    checkoutIfSmallInitialSnapshot = 200,
   } = options;
 
   registerErrorHandler(errorHandler);
@@ -166,6 +167,7 @@ function record<T = eventWithTime>(
 
   let lastFullSnapshotEvent: eventWithTime;
   let incrementalSnapshotCount = 0;
+  let qualityCheckoutScheduled = false;
 
   const eventProcessor = (e: eventWithTime): T => {
     for (const plugin of plugins || []) {
@@ -213,6 +215,20 @@ function record<T = eventWithTime>(
     if (e.type === EventType.FullSnapshot) {
       lastFullSnapshotEvent = e;
       incrementalSnapshotCount = 0;
+
+      if (
+        !isCheckout &&
+        !qualityCheckoutScheduled &&
+        checkoutIfSmallInitialSnapshot &&
+        mirror.getIds().length < checkoutIfSmallInitialSnapshot
+      ) {
+        qualityCheckoutScheduled = true;
+        setTimeout(() => {
+          if (recording) {
+            takeFullSnapshot(true);
+          }
+        }, 1000);
+      }
     } else if (e.type === EventType.IncrementalSnapshot) {
       // attach iframe should be considered as full snapshot
       if (
