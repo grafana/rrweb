@@ -12,6 +12,7 @@ import type {
   serializedNode,
   serializedNodeWithId,
   serializedElementNodeWithId,
+  serializedAdoptedStyleSheet,
   elementNode,
   attributes,
   mediaAttributes,
@@ -31,10 +32,29 @@ import {
   absolutifyURLs,
   markCssSplits,
 } from './snapshot-utils';
+import { stringifyRule } from './utils';
 import dom from '@grafana/rrweb-utils';
 
 let _id = 1;
 const tagNameRegex = new RegExp('[^a-z0-9-_:]');
+
+function serializeAdoptedStyleSheets(
+  doc: Document,
+): serializedAdoptedStyleSheet[] | undefined {
+  if (!doc.adoptedStyleSheets || doc.adoptedStyleSheets.length === 0) {
+    return undefined;
+  }
+  try {
+    return doc.adoptedStyleSheets.map((sheet) => ({
+      rules: Array.from(sheet.cssRules || [], (r, index) => ({
+        rule: stringifyRule(r, sheet.href),
+        index,
+      })),
+    }));
+  } catch {
+    return undefined;
+  }
+}
 
 export const IGNORED_NODE = -2;
 
@@ -426,19 +446,23 @@ function serializeNode(
   // Only record root id when document object is not the base document
   const rootId = getRootId(doc, mirror);
   switch (n.nodeType) {
-    case n.DOCUMENT_NODE:
+    case n.DOCUMENT_NODE: {
+      const adoptedStyleSheets = serializeAdoptedStyleSheets(n as Document);
       if ((n as Document).compatMode !== 'CSS1Compat') {
         return {
           type: NodeType.Document,
           childNodes: [],
           compatMode: (n as Document).compatMode, // probably "BackCompat"
+          adoptedStyleSheets,
         };
       } else {
         return {
           type: NodeType.Document,
           childNodes: [],
+          adoptedStyleSheets,
         };
       }
+    }
     case n.DOCUMENT_TYPE_NODE:
       return {
         type: NodeType.DocumentType,

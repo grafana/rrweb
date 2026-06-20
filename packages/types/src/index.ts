@@ -748,10 +748,15 @@ export enum NodeType {
   Comment,
 }
 
+export type serializedAdoptedStyleSheet = {
+  rules: styleSheetAddRule[];
+};
+
 export type documentNode = {
   type: NodeType.Document;
   childNodes: serializedNodeWithId[];
   compatMode?: string;
+  adoptedStyleSheets?: serializedAdoptedStyleSheet[];
 };
 
 export type documentTypeNode = {

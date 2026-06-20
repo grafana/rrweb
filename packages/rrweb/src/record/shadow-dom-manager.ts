@@ -74,7 +74,19 @@ export class ShadowDomManager {
         mirror: this.mirror,
       }),
     );
-    // Defer this to avoid adoptedStyleSheet events being created before the full snapshot is created or attachShadow action is recorded.
+    this.restoreHandlers.push(
+      initAdoptedStyleSheetObserver(
+        {
+          mirror: this.mirror,
+          stylesheetManager: this.bypassOptions.stylesheetManager,
+        },
+        shadowRoot,
+      ),
+    );
+    // Defer initial adopted stylesheet capture to avoid events being
+    // emitted before the full snapshot or attachShadow action is recorded.
+    // The observer above is already active so any insertRule calls during
+    // this gap are captured as incremental events.
     setTimeout(() => {
       if (
         shadowRoot.adoptedStyleSheets &&
@@ -84,15 +96,6 @@ export class ShadowDomManager {
           shadowRoot.adoptedStyleSheets,
           this.mirror.getId(dom.host(shadowRoot)),
         );
-      this.restoreHandlers.push(
-        initAdoptedStyleSheetObserver(
-          {
-            mirror: this.mirror,
-            stylesheetManager: this.bypassOptions.stylesheetManager,
-          },
-          shadowRoot,
-        ),
-      );
     }, 0);
   }
 

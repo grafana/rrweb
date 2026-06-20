@@ -613,6 +613,30 @@ export function buildNodeWithSN(
       }
     }
     node = doc;
+
+    if (n.adoptedStyleSheets && n.adoptedStyleSheets.length > 0) {
+      const sheets: CSSStyleSheet[] = [];
+      for (const serializedSheet of n.adoptedStyleSheets) {
+        try {
+          const sheet = new CSSStyleSheet();
+          for (const { rule, index } of serializedSheet.rules) {
+            const insertIndex =
+              typeof index === 'number' ? index : sheet.cssRules.length;
+            sheet.insertRule(rule, insertIndex);
+          }
+          sheets.push(sheet);
+        } catch {
+          // constructed stylesheets may not be supported
+        }
+      }
+      if (sheets.length > 0) {
+        try {
+          doc.adoptedStyleSheets = sheets;
+        } catch {
+          // adoptedStyleSheets may not be supported
+        }
+      }
+    }
   }
 
   mirror.add(node, n);
