@@ -168,6 +168,13 @@ function record<T = eventWithTime>(
   let incrementalSnapshotCount = 0;
   const ORPHAN_RESNAPSHOT_COOLDOWN_MS = 5000;
   let lastOrphanSnapshotTime = 0;
+  const onOrphansDropped = () => {
+    const now = nowTimestamp();
+    if (now - lastOrphanSnapshotTime >= ORPHAN_RESNAPSHOT_COOLDOWN_MS) {
+      lastOrphanSnapshotTime = now;
+      setTimeout(() => takeFullSnapshot(true), 0);
+    }
+  };
 
   const eventProcessor = (e: eventWithTime): T => {
     for (const plugin of plugins || []) {
@@ -332,6 +339,7 @@ function record<T = eventWithTime>(
       canvasManager,
       keepIframeSrcFn,
       processedNodeManager,
+      onOrphansDropped,
     },
     mirror,
   });
@@ -509,13 +517,7 @@ function record<T = eventWithTime>(
               },
             });
           },
-          onOrphansDropped: () => {
-            const now = nowTimestamp();
-            if (now - lastOrphanSnapshotTime >= ORPHAN_RESNAPSHOT_COOLDOWN_MS) {
-              lastOrphanSnapshotTime = now;
-              takeFullSnapshot(true);
-            }
-          },
+          onOrphansDropped,
           blockClass,
           ignoreClass,
           ignoreSelector,
