@@ -405,6 +405,8 @@ export default class MutationBuffer {
     }
 
     let candidate: DoubleLinkedListNode | null = null;
+    let lastProgressLength = addList.length;
+    let stallCount = 0;
     while (addList.length) {
       let node: DoubleLinkedListNode | null = null;
       if (candidate) {
@@ -457,6 +459,22 @@ export default class MutationBuffer {
       candidate = node.previous;
       addList.removeNode(node.value);
       pushAdd(node.value);
+
+      if (addList.length < lastProgressLength) {
+        lastProgressLength = addList.length;
+        stallCount = 0;
+      } else {
+        stallCount++;
+        if (stallCount > addList.length) {
+          let droppedCount = 0;
+          while (addList.head) {
+            addList.removeNode(addList.head.value);
+            droppedCount++;
+          }
+          this.onOrphansDropped?.(droppedCount);
+          break;
+        }
+      }
     }
 
     const payload = {

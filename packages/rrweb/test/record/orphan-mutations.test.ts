@@ -470,6 +470,70 @@ describe('orphan mutation patches', function (this: ISuite) {
     });
   });
 
+  describe('drain loop stall protection', () => {
+    it('does not infinite loop when prepended node re-defers in drain', async () => {
+      await ctx.page.evaluate(() => {
+        const { record } = (window as unknown as IWindow).rrweb;
+        record({
+          emit: (window as unknown as IWindow).emit,
+          checkoutIfSmallInitialSnapshot: false,
+        });
+      });
+
+      const completed = await Promise.race([
+        ctx.page.evaluate(() => {
+          const container = document.getElementById('container')!;
+          while (container.firstChild) container.removeChild(container.firstChild);
+          const c = document.createElement('div');
+          c.id = 'node-c';
+          const b = document.createElement('div');
+          b.id = 'node-b';
+          const a = document.createElement('div');
+          a.id = 'node-a';
+          container.appendChild(c);
+          container.insertBefore(b, c);
+          container.insertBefore(a, b);
+        }).then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000)),
+      ]);
+      expect(completed).toBe(true);
+
+      await waitForRAF(ctx.page);
+      const adds = getMutationAdds(ctx.events);
+      expect(adds.length).toBeGreaterThan(0);
+    });
+
+    it('terminates drain loop when moved node has only unmirrored siblings', async () => {
+      await ctx.page.evaluate(() => {
+        const { record } = (window as unknown as IWindow).rrweb;
+        record({
+          emit: (window as unknown as IWindow).emit,
+          checkoutIfSmallInitialSnapshot: false,
+        });
+      });
+
+      const completed = await Promise.race([
+        ctx.page.evaluate(() => {
+          const container = document.getElementById('container')!;
+          const a = document.getElementById('a')!;
+          const newBefore = document.createElement('div');
+          newBefore.id = 'new-before-a';
+          const newAfterBefore = document.createElement('div');
+          newAfterBefore.id = 'new-after-before';
+          container.insertBefore(newBefore, a);
+          container.insertBefore(newAfterBefore, newBefore);
+          container.insertBefore(a, newAfterBefore);
+        }).then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000)),
+      ]);
+      expect(completed).toBe(true);
+
+      await waitForRAF(ctx.page);
+      const mutationEvents = getMutationEvents(ctx.events);
+      expect(mutationEvents.length).toBeGreaterThan(0);
+    });
+  });
+
   describe('integration', () => {
     it('records complex DOM mutation sequence without orphans', async () => {
       await ctx.page.evaluate(() => {
