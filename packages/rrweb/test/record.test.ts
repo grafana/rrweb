@@ -127,6 +127,7 @@ describe('record', function (this: ISuite) {
       record({
         emit: (window as unknown as IWindow).emit,
         checkoutEveryNth: 10,
+        checkoutIfSmallInitialSnapshot: false,
       });
     });
     let count = 30;
@@ -134,19 +135,20 @@ describe('record', function (this: ISuite) {
       await ctx.page.type('input', 'a');
     }
     await ctx.page.waitForTimeout(10);
-    const metaEvents = ctx.events.filter(
-      (event: eventWithTime) => event.type === EventType.Meta,
-    );
-    const fullSnapshotEvents = ctx.events.filter(
-      (event: eventWithTime) => event.type === EventType.FullSnapshot,
-    );
-    expect(metaEvents.length).toEqual(4);
-    expect(fullSnapshotEvents.length).toEqual(4);
+    expect(ctx.events.length).toEqual(39);
+    expect(
+      ctx.events.filter((event: eventWithTime) => event.type === EventType.Meta)
+        .length,
+    ).toEqual(4);
+    expect(
+      ctx.events.filter(
+        (event: eventWithTime) => event.type === EventType.FullSnapshot,
+      ).length,
+    ).toEqual(4);
     expect(ctx.events[1].type).toEqual(EventType.FullSnapshot);
-    for (const fsEvent of fullSnapshotEvents) {
-      const idx = ctx.events.indexOf(fsEvent);
-      expect(ctx.events[idx - 1].type).toEqual(EventType.Meta);
-    }
+    expect(ctx.events[13].type).toEqual(EventType.FullSnapshot);
+    expect(ctx.events[25].type).toEqual(EventType.FullSnapshot);
+    expect(ctx.events[37].type).toEqual(EventType.FullSnapshot);
   });
 
   it('can checkout full snapshot by time', async () => {

@@ -170,10 +170,13 @@ function record<T = eventWithTime>(
   let qualityCheckoutScheduled = false;
   const ORPHAN_RESNAPSHOT_COOLDOWN_MS = 5000;
   let lastOrphanSnapshotTime = 0;
-  const onOrphansDropped = () => {
+  const onOrphansDropped = (count: number) => {
     const now = nowTimestamp();
     if (now - lastOrphanSnapshotTime >= ORPHAN_RESNAPSHOT_COOLDOWN_MS) {
       lastOrphanSnapshotTime = now;
+      console.warn(
+        `[rrweb] Dropped ${count} orphan mutation(s), scheduling full re-snapshot`,
+      );
       setTimeout(() => {
         if (recording) takeFullSnapshot(true);
       }, 0);

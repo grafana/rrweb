@@ -84,8 +84,8 @@ export type recordOptions<T> = {
   errorHandler?: ErrorHandler;
   /**
    * If the initial full snapshot has fewer serialized nodes than this
-   * threshold, schedule a deferred checkout after 100ms to capture
-   * the fully-rendered SPA DOM. Set to 0 or false to disable.
+   * threshold, schedule a deferred checkout once incremental mutations
+   * push the mirror past the threshold. Set to 0 or false to disable.
    */
   checkoutIfSmallInitialSnapshot?: number | false;
 };
