@@ -323,6 +323,12 @@ export default class MutationBuffer {
       if (parentId === -1) {
         return addList.addNode(n);
       }
+      if (nextId === -1) {
+        const prevId = getPreviousId(n);
+        if (prevId === null) {
+          return addList.addNode(n);
+        }
+      }
       const sn = serializeNodeWithId(n, {
         doc: this.doc,
         mirror: this.mirror,
