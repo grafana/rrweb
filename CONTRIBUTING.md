@@ -32,6 +32,29 @@ clear and has sufficient instructions to be able to reproduce the issue.
 - Run a cobrowsing/mirroring session locally: (in `/packages/rrweb`) `npm run live-stream`
 - Build individual packages: `npm run build` or `npm run dev`
 - Test: `npm test` or `npm run test:watch`
+- WebKit (Safari engine) tests: `npm run test:webkit` (in `/packages/rrweb` or `/packages/rrweb-snapshot`)
+
+### WebKit tests
+
+The monkey-patched MutationObserver tests are excluded from the regular `npm test` run because they require a Playwright WebKit browser binary. They are run separately via `npm run test:webkit`.
+
+**Install the browser once, then run directly:**
+
+```sh
+npx playwright install webkit
+cd packages/rrweb && npm run test:webkit
+cd packages/rrweb-snapshot && npm run test:webkit
+```
+
+You can also run these tests against Chromium (the default when `BROWSER` is not set):
+
+```sh
+npx playwright install chromium
+cd packages/rrweb && npx vitest run --config vitest.config.webkit.ts
+```
+
+Set `BROWSER=webkit` to run against WebKit specifically.
+
 - Lint: `npm run lint`
 - Rewrite files with prettier: `npm run format` or `npm run format:head`
 
