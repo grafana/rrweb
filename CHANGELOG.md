@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.0-grafana.2](https://github.com/grafana/rrweb/compare/v2.0.0-grafana.1...v2.0.0-grafana.2) (2026-06-22)
+
+
+### Bug Fixes
+
+* getCurrentTime() stuck in live mode after last event ([#23](https://github.com/grafana/rrweb/issues/23)) ([c3808bc](https://github.com/grafana/rrweb/commit/c3808bc7e650ab5ecb0091205c416efe634f5416))
+* handle hash fragments in absolutifyURLs ([#22](https://github.com/grafana/rrweb/issues/22)) ([6556f18](https://github.com/grafana/rrweb/commit/6556f185e0eb3e14ed99c6095318506a2d80b2e0))
+* keep iframe alive in Safari for MutationObserver ([#24](https://github.com/grafana/rrweb/issues/24)) ([27f8615](https://github.com/grafana/rrweb/commit/27f8615c993bc7a69bfb5f5d1f247dad48051cbc))
+
 ## [2.0.0-grafana.1](https://github.com/grafana/rrweb/compare/v2.0.0-grafana.0...v2.0.0-grafana.1) (2026-06-19)
 
 
