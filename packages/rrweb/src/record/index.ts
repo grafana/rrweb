@@ -98,7 +98,6 @@ function record<T = eventWithTime>(
     plugins,
     keepIframeSrcFn = () => false,
     ignoreCSSAttributes = new Set([]),
-    onOrphansDropped: _onOrphansDropped,
     resnapshotOnOrphanDrop = false,
     errorHandler,
   } = options;
@@ -172,11 +171,6 @@ function record<T = eventWithTime>(
   let lastOrphanSnapshotTime = 0;
   let pendingOrphanTimer: ReturnType<typeof setTimeout> | null = null;
   const onOrphansDropped = (count: number) => {
-    try {
-      _onOrphansDropped?.(count);
-    } catch {
-      // User callback errors must not prevent internal recovery.
-    }
     if (!resnapshotOnOrphanDrop) return;
     const now = nowTimestamp();
     const elapsed = now - lastOrphanSnapshotTime;
