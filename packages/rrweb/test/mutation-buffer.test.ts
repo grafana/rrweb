@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { createMirror, serializeNodeWithId, snapshot } from 'rrweb-snapshot';
+import { createMirror, serializeNodeWithId, snapshot } from '@grafana/rrweb-snapshot';
 import type { mutationCallbackParam } from '@rrweb/types';
 import { vi } from 'vitest';
 import MutationBuffer from '../src/record/mutation';
