@@ -98,6 +98,7 @@ function record<T = eventWithTime>(
     plugins,
     keepIframeSrcFn = () => false,
     ignoreCSSAttributes = new Set([]),
+    onOrphansDropped: _onOrphansDropped,
     errorHandler,
   } = options;
 
@@ -166,6 +167,21 @@ function record<T = eventWithTime>(
 
   let lastFullSnapshotEvent: eventWithTime;
   let incrementalSnapshotCount = 0;
+  const ORPHAN_RESNAPSHOT_COOLDOWN_MS = 5000;
+  let lastOrphanSnapshotTime = 0;
+  const onOrphansDropped = (count: number) => {
+    _onOrphansDropped?.(count);
+    const now = nowTimestamp();
+    if (now - lastOrphanSnapshotTime >= ORPHAN_RESNAPSHOT_COOLDOWN_MS) {
+      lastOrphanSnapshotTime = now;
+      console.warn(
+        `[rrweb] Dropped ${count} orphan mutation(s), scheduling full re-snapshot`,
+      );
+      setTimeout(() => {
+        if (recording) takeFullSnapshot(true);
+      }, 0);
+    }
+  };
 
   const eventProcessor = (e: eventWithTime): T => {
     for (const plugin of plugins || []) {
@@ -330,6 +346,7 @@ function record<T = eventWithTime>(
       canvasManager,
       keepIframeSrcFn,
       processedNodeManager,
+      onOrphansDropped,
     },
     mirror,
   });
@@ -534,6 +551,7 @@ function record<T = eventWithTime>(
           processedNodeManager,
           canvasManager,
           ignoreCSSAttributes,
+          onOrphansDropped,
           plugins:
             plugins
               ?.filter((p) => p.observer)

@@ -81,6 +81,7 @@ export type recordOptions<T> = {
   // departed, please use sampling options
   mousemoveWait?: number;
   keepIframeSrcFn?: KeepIframeSrcFn;
+  onOrphansDropped?: (count: number) => void;
   errorHandler?: ErrorHandler;
 };
 
@@ -125,6 +126,7 @@ export type observerParam = {
   canvasManager: CanvasManager;
   processedNodeManager: ProcessedNodeManager;
   ignoreCSSAttributes: Set<string>;
+  onOrphansDropped?: (count: number) => void;
   plugins: Array<{
     observer: (
       cb: (...arg: Array<unknown>) => void,
@@ -159,6 +161,7 @@ export type MutationBufferParam = Pick<
   | 'shadowDomManager'
   | 'canvasManager'
   | 'processedNodeManager'
+  | 'onOrphansDropped'
 >;
 
 export type ReplayPlugin = {
