@@ -257,6 +257,10 @@ export default class MutationBuffer {
   }
 
   public reset() {
+    const pending = this.pendingAdds.size;
+    if (pending > 0) {
+      console.warn(`[rrweb mutation] reset(): clearing ${pending} pending add(s)`);
+    }
     this.shadowDomManager.reset();
     this.canvasManager.reset();
     this.clearPendingAdds();
@@ -267,8 +271,20 @@ export default class MutationBuffer {
     this.emit(); // clears buffer if not locked/frozen
   };
 
+  private _nodeLabel(n: Node): string {
+    const el = n as Element;
+    const tag = el.tagName || n.nodeName;
+    const id = el.id ? `#${el.id}` : '';
+    const cls = el.className && typeof el.className === 'string'
+      ? `.${el.className.split(/\s+/).slice(0, 2).join('.')}`
+      : '';
+    const mirrorId = this.mirror.getId(n);
+    return `<${tag}${id}${cls}> (mirror=${mirrorId})`;
+  }
+
   public emit = () => {
     if (this.frozen || this.locked) {
+      console.log(`[rrweb mutation] emit() skipped: ${this.frozen ? 'frozen' : 'locked'}`);
       return;
     }
 
@@ -297,13 +313,14 @@ export default class MutationBuffer {
     const pushAdd = (n: Node) => {
       const parent = dom.parentNode(n);
       if (!parent || !inDom(n)) {
+        console.log(`[rrweb mutation] pushAdd dropped: ${this._nodeLabel(n)} — ${!parent ? 'no parent' : 'not in DOM'}`);
         return;
       }
       let cssCaptured = false;
       if (n.nodeType === Node.TEXT_NODE) {
         const parentTag = (parent as Element).tagName;
         if (parentTag === 'TEXTAREA') {
-          // genTextAreaValueMutation already called via parent
+          console.log(`[rrweb mutation] pushAdd skipped: text node in TEXTAREA`);
           return;
         } else if (parentTag === 'STYLE' && this.addedSet.has(parent)) {
           // css content will be recorded via parent's _cssText attribute when
@@ -318,6 +335,7 @@ export default class MutationBuffer {
 
       const nextId = getNextId(n);
       if (parentId === -1 || nextId === -1) {
+        console.log(`[rrweb mutation] pushAdd deferred: ${this._nodeLabel(n)} — ${parentId === -1 ? 'parentId=-1' : ''}${nextId === -1 ? ' nextId=-1' : ''} → addList queue`);
         return addList.addNode(n);
       }
       const sn = serializeNodeWithId(n, {
@@ -361,12 +379,15 @@ export default class MutationBuffer {
         cssCaptured,
       });
       if (sn) {
+        console.log(`[rrweb mutation] pushAdd serialized: ${this._nodeLabel(n)} → add(parentId=${parentId}, nextId=${nextId}, snId=${sn.id})`);
         adds.push({
           parentId,
           nextId,
           node: sn,
         });
         addedIds.add(sn.id);
+      } else {
+        console.warn(`[rrweb mutation] pushAdd failed: ${this._nodeLabel(n)} — serializeNodeWithId returned null`);
       }
     };
 
@@ -374,11 +395,14 @@ export default class MutationBuffer {
       this.mirror.removeNodeFromMap(this.mapRemoves.shift()!);
     }
 
+    console.log(`[rrweb mutation] emit() start: movedSet=${this.movedSet.size} addedSet=${this.addedSet.size} texts=${this.texts.length} attrs=${this.attributes.length} removes=${this.removes.length} pendingAdds=${pendingAddAttempts.size}`);
+
     for (const n of this.movedSet) {
       if (
         isParentRemoved(this.removesSubTreeCache, n, this.mirror) &&
         !this.movedSet.has(dom.parentNode(n)!)
       ) {
+        console.log(`[rrweb mutation] movedSet skipped: ${this._nodeLabel(n)} — parent removed`);
         continue;
       }
       pushAdd(n);
@@ -393,6 +417,7 @@ export default class MutationBuffer {
       } else if (isAncestorInSet(this.movedSet, n)) {
         pushAdd(n);
       } else {
+        console.log(`[rrweb mutation] addedSet dropped: ${this._nodeLabel(n)} — ancestor in droppedSet or parent removed`);
         this.droppedSet.add(n);
       }
     }
@@ -469,7 +494,10 @@ export default class MutationBuffer {
          * keep them for a later emit so they can be retried if another
          * buffer or event serializes the missing parent/sibling first.
          */
+        const remaining = addList.length;
+        console.warn(`[rrweb mutation] addList exhausted: ${remaining} node(s) could not find serialized parent → moving to unresolvedAdds`);
         while (addList.head) {
+          console.log(`[rrweb mutation] addList → unresolved: ${this._nodeLabel(addList.head.value)}`);
           unresolvedAdds.add(addList.head.value);
           addList.removeNode(addList.head.value);
         }
@@ -477,6 +505,7 @@ export default class MutationBuffer {
       }
       candidate = node.previous;
       addList.removeNode(node.value);
+      console.log(`[rrweb mutation] addList resolved: ${this._nodeLabel(node.value)} — parent/sibling now available`);
       pushAdd(node.value);
     }
 
@@ -556,9 +585,11 @@ export default class MutationBuffer {
     this.movedMap = {};
 
     if (payloadIsEmpty) {
+      console.log(`[rrweb mutation] emit() → payload empty, skipping callback (pendingAdds=${this.pendingAdds.size})`);
       return;
     }
 
+    console.log(`[rrweb mutation] emit() → mutationCb: adds=${payload.adds.length} removes=${payload.removes.length} texts=${payload.texts.length} attrs=${payload.attributes.length} (pendingAdds=${this.pendingAdds.size})`);
     this.mutationCb(payload);
   };
 
@@ -613,6 +644,7 @@ export default class MutationBuffer {
 
   private processMutation = (m: mutationRecord) => {
     if (isIgnored(m.target, this.mirror, this.slimDOMOptions)) {
+      console.log(`[rrweb mutation] processMutation skipped: ${this._nodeLabel(m.target)} — ignored target (type=${m.type})`);
       return;
     }
     switch (m.type) {
@@ -759,13 +791,14 @@ export default class MutationBuffer {
         /**
          * Parent is blocked, ignore all child mutations
          */
-        if (isBlocked(m.target, this.blockClass, this.blockSelector, true))
+        if (isBlocked(m.target, this.blockClass, this.blockSelector, true)) {
+          console.log(`[rrweb mutation] childList ignored: parent ${this._nodeLabel(m.target)} is blocked (added=${m.addedNodes.length} removed=${m.removedNodes.length})`);
           return;
+        }
 
         if ((m.target as Element).tagName === 'TEXTAREA') {
-          // children would be ignored in genAdds as they aren't in the mirror
           this.genTextAreaValueMutation(m.target as HTMLTextAreaElement);
-          return; // any removedNodes won't have been in mirror either
+          return;
         }
 
         m.addedNodes.forEach((n) => this.genAdds(n, m.target));
@@ -779,33 +812,25 @@ export default class MutationBuffer {
             isIgnored(n, this.mirror, this.slimDOMOptions) ||
             !isSerialized(n, this.mirror)
           ) {
+            console.log(`[rrweb mutation] remove ignored: ${this._nodeLabel(n)} — ${isBlocked(m.target, this.blockClass, this.blockSelector, false) ? 'parent blocked' : !isSerialized(n, this.mirror) ? 'not serialized' : 'ignored node'}`);
             return;
           }
-          // removed node has not been serialized yet, just remove it from the Set
           if (this.addedSet.has(n)) {
+            console.log(`[rrweb mutation] remove: ${this._nodeLabel(n)} — was in addedSet, moving to droppedSet (added then removed before emit)`);
             deepDelete(this.addedSet, n);
             this.droppedSet.add(n);
           } else if (this.addedSet.has(m.target) && nodeId === -1) {
-            /**
-             * If target was newly added and removed child node was
-             * not serialized, it means the child node has been removed
-             * before callback fired, so we can ignore it because
-             * newly added node will be serialized without child nodes.
-             * TODO: verify this
-             */
+            console.log(`[rrweb mutation] remove ignored: ${this._nodeLabel(n)} — parent newly added, child not yet serialized (nodeId=-1)`);
           } else if (isAncestorRemoved(m.target, this.mirror)) {
-            /**
-             * If parent id was not in the mirror map any more, it
-             * means the parent node has already been removed. So
-             * the node is also removed which we do not need to track
-             * and replay.
-             */
+            console.log(`[rrweb mutation] remove ignored: ${this._nodeLabel(n)} — ancestor already removed from mirror`);
           } else if (
             this.movedSet.has(n) &&
             this.movedMap[moveKey(nodeId, parentId)]
           ) {
+            console.log(`[rrweb mutation] remove: ${this._nodeLabel(n)} — was in movedSet, cancelling move`);
             deepDelete(this.movedSet, n);
           } else {
+            console.log(`[rrweb mutation] remove recorded: ${this._nodeLabel(n)} parentId=${parentId}`);
             this.removes.push({
               parentId,
               id: nodeId,
@@ -829,16 +854,19 @@ export default class MutationBuffer {
    * Make sure you check if `n`'s parent is blocked before calling this function
    * */
   private genAdds = (n: Node, target?: Node) => {
-    // this node was already recorded in other buffer, ignore it
-    if (this.processedNodeManager.inOtherBuffer(n, this)) return;
+    if (this.processedNodeManager.inOtherBuffer(n, this)) {
+      console.log(`[rrweb mutation] genAdds skipped: ${this._nodeLabel(n)} — in other buffer`);
+      return;
+    }
 
-    // if n is added to set, there is no need to travel it and its' children again
     if (this.addedSet.has(n) || this.movedSet.has(n)) return;
 
     if (this.mirror.hasNode(n)) {
       if (isIgnored(n, this.mirror, this.slimDOMOptions)) {
+        console.log(`[rrweb mutation] genAdds skipped: ${this._nodeLabel(n)} — ignored (slimDOM)`);
         return;
       }
+      console.log(`[rrweb mutation] genAdds → movedSet: ${this._nodeLabel(n)} (already in mirror)`);
       this.movedSet.add(n);
       let targetId: number | null = null;
       if (target && this.mirror.hasNode(target)) {
@@ -848,12 +876,11 @@ export default class MutationBuffer {
         this.movedMap[moveKey(this.mirror.getId(n), targetId)] = true;
       }
     } else {
+      console.log(`[rrweb mutation] genAdds → addedSet: ${this._nodeLabel(n)} (new node)`);
       this.addedSet.add(n);
       this.droppedSet.delete(n);
     }
 
-    // if this node is blocked `serializeNode` will turn it into a placeholder element
-    // but we have to remove it's children otherwise they will be added as placeholders too
     if (!isBlocked(n, this.blockClass, this.blockSelector, false)) {
       dom.childNodes(n).forEach((childN) => this.genAdds(childN));
       if (hasShadowRoot(n)) {
