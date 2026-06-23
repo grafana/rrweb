@@ -398,10 +398,24 @@ export default class MutationBuffer {
     }
     this.clearPendingAdds();
     for (const [n, attempts] of pendingAddAttempts) {
-      if (this.mirror.hasNode(n) || !inDom(n) || attempts >= PENDING_ADD_MAX_RETRIES) {
+      if (this.mirror.hasNode(n)) {
+        const tag = (n as Element).tagName || n.nodeName;
+        console.log(`[rrweb pendingAdd] resolved: <${tag}> already in mirror (attempt ${attempts})`);
+        continue;
+      }
+      if (!inDom(n)) {
+        const tag = (n as Element).tagName || n.nodeName;
+        console.log(`[rrweb pendingAdd] dropped: <${tag}> no longer in DOM (attempt ${attempts})`);
+        continue;
+      }
+      if (attempts >= PENDING_ADD_MAX_RETRIES) {
+        const tag = (n as Element).tagName || n.nodeName;
+        console.warn(`[rrweb pendingAdd] dropped: <${tag}> hit max retries (${PENDING_ADD_MAX_RETRIES})`);
         continue;
       }
       if (!this.addedSet.has(n) && !this.movedSet.has(n)) {
+        const tag = (n as Element).tagName || n.nodeName;
+        console.log(`[rrweb pendingAdd] retrying: <${tag}> (attempt ${attempts + 1})`);
         pushAdd(n);
       }
     }
@@ -516,9 +530,12 @@ export default class MutationBuffer {
       adds,
     };
 
-    unresolvedAdds.forEach((node) =>
-      this.rememberPendingAdd(node, (pendingAddAttempts.get(node) || 0) + 1),
-    );
+    unresolvedAdds.forEach((node) => {
+      const attempt = (pendingAddAttempts.get(node) || 0) + 1;
+      const tag = (node as Element).tagName || node.nodeName;
+      console.log(`[rrweb pendingAdd] queued: <${tag}> as pending (attempt ${attempt})`);
+      this.rememberPendingAdd(node, attempt);
+    });
 
     // payload may be empty if the mutations happened in some blocked elements
     const payloadIsEmpty =
@@ -551,6 +568,10 @@ export default class MutationBuffer {
       clearTimeout(this.pendingAddCleanupTimer);
     }
     this.pendingAddCleanupTimer = setTimeout(() => {
+      const count = this.pendingAdds.size;
+      if (count > 0) {
+        console.warn(`[rrweb pendingAdd] cleanup timer fired: dropping ${count} pending add(s) after ${PENDING_ADD_MAX_AGE}ms idle`);
+      }
       this.pendingAdds.clear();
       this.pendingAddCleanupTimer = null;
     }, PENDING_ADD_MAX_AGE);
