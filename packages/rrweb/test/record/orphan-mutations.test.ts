@@ -73,8 +73,6 @@ const setup = function (this: ISuite, content: string): ISuite {
       }
       ctx.events.push(e);
     });
-
-    ctx.page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
   });
 
   afterEach(async () => {
@@ -133,15 +131,12 @@ describe('orphan mutation patches', function (this: ISuite) {
       const adds = getMutationAdds(ctx.events);
       const newSpanAdd = adds.find(
         (a) =>
-          a.node.type === 2 &&
-          'tagName' in a.node &&
-          a.node.tagName === 'span',
+          a.node.type === 2 && 'tagName' in a.node && a.node.tagName === 'span',
       );
       expect(newSpanAdd).toBeDefined();
-      if (newSpanAdd && newSpanAdd.nextId === null) {
-        expect(newSpanAdd.previousId).toBeDefined();
-        expect(typeof newSpanAdd.previousId).toBe('number');
-      }
+      expect(newSpanAdd!.nextId).toBeNull();
+      expect(newSpanAdd!.previousId).toBeDefined();
+      expect(typeof newSpanAdd!.previousId).toBe('number');
     });
 
     it('does not set previousId when next sibling is mirrored', async () => {
@@ -165,9 +160,7 @@ describe('orphan mutation patches', function (this: ISuite) {
       const adds = getMutationAdds(ctx.events);
       const insertedAdd = adds.find(
         (a) =>
-          a.node.type === 2 &&
-          'tagName' in a.node &&
-          a.node.tagName === 'span',
+          a.node.type === 2 && 'tagName' in a.node && a.node.tagName === 'span',
       );
       expect(insertedAdd).toBeDefined();
       expect(insertedAdd!.nextId).not.toBeNull();
@@ -234,17 +227,8 @@ describe('orphan mutation patches', function (this: ISuite) {
           a.node.attributes?.id === 'prepended',
       );
       expect(prependedAdd).toBeDefined();
-      const aId = adds.find(
-        (a) =>
-          a.node.type === 2 &&
-          'attributes' in a.node &&
-          a.node.attributes?.id === 'a',
-      );
-      if (aId) {
-        expect(prependedAdd!.nextId).toBe(aId.node.id);
-      } else {
-        expect(prependedAdd!.nextId).not.toBeNull();
-      }
+      expect(prependedAdd!.nextId).not.toBeNull();
+      expect(prependedAdd!.nextId).toBeGreaterThan(0);
     });
   });
 
@@ -320,20 +304,25 @@ describe('orphan mutation patches', function (this: ISuite) {
       });
 
       const completed = await Promise.race([
-        ctx.page.evaluate(() => {
-          const container = document.getElementById('container')!;
-          while (container.firstChild) container.removeChild(container.firstChild);
-          const c = document.createElement('div');
-          c.id = 'node-c';
-          const b = document.createElement('div');
-          b.id = 'node-b';
-          const a = document.createElement('div');
-          a.id = 'node-a';
-          container.appendChild(c);
-          container.insertBefore(b, c);
-          container.insertBefore(a, b);
-        }).then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000)),
+        ctx.page
+          .evaluate(() => {
+            const container = document.getElementById('container')!;
+            while (container.firstChild)
+              container.removeChild(container.firstChild);
+            const c = document.createElement('div');
+            c.id = 'node-c';
+            const b = document.createElement('div');
+            b.id = 'node-b';
+            const a = document.createElement('div');
+            a.id = 'node-a';
+            container.appendChild(c);
+            container.insertBefore(b, c);
+            container.insertBefore(a, b);
+          })
+          .then(() => true),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), 5000),
+        ),
       ]);
       expect(completed).toBe(true);
 
@@ -351,18 +340,22 @@ describe('orphan mutation patches', function (this: ISuite) {
       });
 
       const completed = await Promise.race([
-        ctx.page.evaluate(() => {
-          const container = document.getElementById('container')!;
-          const a = document.getElementById('a')!;
-          const newBefore = document.createElement('div');
-          newBefore.id = 'new-before-a';
-          const newAfterBefore = document.createElement('div');
-          newAfterBefore.id = 'new-after-before';
-          container.insertBefore(newBefore, a);
-          container.insertBefore(newAfterBefore, newBefore);
-          container.insertBefore(a, newAfterBefore);
-        }).then(() => true),
-        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000)),
+        ctx.page
+          .evaluate(() => {
+            const container = document.getElementById('container')!;
+            const a = document.getElementById('a')!;
+            const newBefore = document.createElement('div');
+            newBefore.id = 'new-before-a';
+            const newAfterBefore = document.createElement('div');
+            newAfterBefore.id = 'new-after-before';
+            container.insertBefore(newBefore, a);
+            container.insertBefore(newAfterBefore, newBefore);
+            container.insertBefore(a, newAfterBefore);
+          })
+          .then(() => true),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => resolve(false), 5000),
+        ),
       ]);
       expect(completed).toBe(true);
 
@@ -461,7 +454,7 @@ describe('orphan mutation patches', function (this: ISuite) {
       expect(noOrphanParents).toBe(true);
 
       const hasValidAnchoring = adds.every(
-        (a) => a.nextId !== undefined || a.previousId !== undefined,
+        (a) => a.nextId !== null || a.previousId != null,
       );
       expect(hasValidAnchoring).toBe(true);
     });
