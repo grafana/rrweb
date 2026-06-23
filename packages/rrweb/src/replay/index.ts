@@ -1656,7 +1656,12 @@ export class Replayer {
           );
       }
 
-      if (previous && previous.nextSibling && previous.nextSibling.parentNode) {
+      if (
+        previous &&
+        previous.nextSibling &&
+        previous.nextSibling.parentNode &&
+        (parent as TNode).contains(previous as TNode)
+      ) {
         (parent as TNode).insertBefore(
           target as TNode,
           previous.nextSibling as TNode,
