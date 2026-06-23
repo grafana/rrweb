@@ -82,6 +82,12 @@ export type recordOptions<T> = {
   mousemoveWait?: number;
   keepIframeSrcFn?: KeepIframeSrcFn;
   errorHandler?: ErrorHandler;
+  /**
+   * If the initial full snapshot has fewer serialized nodes than this
+   * threshold, schedule a deferred checkout once incremental mutations
+   * push the mirror past the threshold. Set to 0 or false to disable.
+   */
+  checkoutIfSmallInitialSnapshot?: number | false;
 };
 
 export type observerParam = {
