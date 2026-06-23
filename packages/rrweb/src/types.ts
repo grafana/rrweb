@@ -82,6 +82,7 @@ export type recordOptions<T> = {
   mousemoveWait?: number;
   keepIframeSrcFn?: KeepIframeSrcFn;
   onOrphansDropped?: (count: number) => void;
+  resnapshotOnOrphanDrop?: boolean;
   errorHandler?: ErrorHandler;
 };
 

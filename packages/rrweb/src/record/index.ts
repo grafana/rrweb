@@ -99,6 +99,7 @@ function record<T = eventWithTime>(
     keepIframeSrcFn = () => false,
     ignoreCSSAttributes = new Set([]),
     onOrphansDropped: _onOrphansDropped,
+    resnapshotOnOrphanDrop = false,
     errorHandler,
   } = options;
 
@@ -176,6 +177,7 @@ function record<T = eventWithTime>(
     } catch {
       // User callback errors must not prevent internal recovery.
     }
+    if (!resnapshotOnOrphanDrop) return;
     const now = nowTimestamp();
     const elapsed = now - lastOrphanSnapshotTime;
     if (elapsed >= ORPHAN_RESNAPSHOT_COOLDOWN_MS) {
