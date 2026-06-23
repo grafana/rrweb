@@ -169,10 +169,16 @@ function record<T = eventWithTime>(
   let incrementalSnapshotCount = 0;
   const ORPHAN_RESNAPSHOT_COOLDOWN_MS = 5000;
   let lastOrphanSnapshotTime = 0;
+  let pendingOrphanTimer: ReturnType<typeof setTimeout> | null = null;
   const onOrphansDropped = (count: number) => {
-    _onOrphansDropped?.(count);
+    try {
+      _onOrphansDropped?.(count);
+    } catch {
+      // User callback errors must not prevent internal recovery.
+    }
     const now = nowTimestamp();
-    if (now - lastOrphanSnapshotTime >= ORPHAN_RESNAPSHOT_COOLDOWN_MS) {
+    const elapsed = now - lastOrphanSnapshotTime;
+    if (elapsed >= ORPHAN_RESNAPSHOT_COOLDOWN_MS) {
       lastOrphanSnapshotTime = now;
       console.warn(
         `[rrweb] Dropped ${count} orphan mutation(s), scheduling full re-snapshot`,
@@ -180,6 +186,18 @@ function record<T = eventWithTime>(
       setTimeout(() => {
         if (recording) takeFullSnapshot(true);
       }, 0);
+    } else if (!pendingOrphanTimer) {
+      const remaining = ORPHAN_RESNAPSHOT_COOLDOWN_MS - elapsed;
+      pendingOrphanTimer = setTimeout(() => {
+        pendingOrphanTimer = null;
+        if (recording) {
+          lastOrphanSnapshotTime = nowTimestamp();
+          console.warn(
+            `[rrweb] Orphan mutations detected during cooldown, scheduling deferred re-snapshot`,
+          );
+          takeFullSnapshot(true);
+        }
+      }, remaining);
     }
   };
 
@@ -633,6 +651,10 @@ function record<T = eventWithTime>(
         }
       });
       processedNodeManager.destroy();
+      if (pendingOrphanTimer) {
+        clearTimeout(pendingOrphanTimer);
+        pendingOrphanTimer = null;
+      }
       recording = false;
       unregisterErrorHandler();
     };
