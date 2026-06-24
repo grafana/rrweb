@@ -28,6 +28,10 @@ export class MediaManager {
     () => void
   > = new Map();
 
+  private readonly boundStart: () => void;
+  private readonly boundPause: () => void;
+  private speedSubscription: { unsubscribe: () => void } | undefined;
+
   constructor(options: {
     warn: (...args: Parameters<typeof console.warn>) => void;
     service: ReturnType<typeof createPlayerService>;
@@ -41,11 +45,14 @@ export class MediaManager {
     this.emitter = options.emitter;
     this.getCurrentTime = options.getCurrentTime;
 
-    this.emitter.on(ReplayerEvents.Start, this.start.bind(this));
-    this.emitter.on(ReplayerEvents.SkipStart, this.start.bind(this));
-    this.emitter.on(ReplayerEvents.Pause, this.pause.bind(this));
-    this.emitter.on(ReplayerEvents.Finish, this.pause.bind(this));
-    this.speedService.subscribe(() => {
+    this.boundStart = this.start.bind(this);
+    this.boundPause = this.pause.bind(this);
+
+    this.emitter.on(ReplayerEvents.Start, this.boundStart);
+    this.emitter.on(ReplayerEvents.SkipStart, this.boundStart);
+    this.emitter.on(ReplayerEvents.Pause, this.boundPause);
+    this.emitter.on(ReplayerEvents.Finish, this.boundPause);
+    this.speedSubscription = this.speedService.subscribe(() => {
       this.syncAllMediaElements();
     });
   }
@@ -291,5 +298,15 @@ export class MediaManager {
 
   public reset() {
     this.mediaMap.clear();
+  }
+
+  public destroy() {
+    this.reset();
+    this.emitter.off(ReplayerEvents.Start, this.boundStart);
+    this.emitter.off(ReplayerEvents.SkipStart, this.boundStart);
+    this.emitter.off(ReplayerEvents.Pause, this.boundPause);
+    this.emitter.off(ReplayerEvents.Finish, this.boundPause);
+    this.speedSubscription?.unsubscribe();
+    this.speedSubscription = undefined;
   }
 }

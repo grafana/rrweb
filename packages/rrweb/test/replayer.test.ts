@@ -977,6 +977,93 @@ describe('replayer', function () {
     expect(wrapper).toBeNull();
   });
 
+  it('should stop xstate services on destroy', async () => {
+    const result = await page.evaluate(`
+      const { Replayer } = rrweb;
+      const replayer = new Replayer(events);
+      replayer.play();
+      replayer.destroy();
+      ({
+        serviceStatus: replayer.service.status,
+        speedServiceStatus: replayer.speedService.status,
+      });
+    `);
+    // @xstate/fsm InterpreterStatus.Stopped === 2
+    expect(result).toEqual({
+      serviceStatus: 2,
+      speedServiceStatus: 2,
+    });
+  });
+
+  it('should clear emitter listeners on destroy', async () => {
+    const listenerCount = await page.evaluate(`
+      const { Replayer } = rrweb;
+      const replayer = new Replayer(events);
+      replayer.play();
+      replayer.destroy();
+      replayer['emitter'].all.size;
+    `);
+    expect(listenerCount).toEqual(0);
+  });
+
+  it('should clear imageMap and canvasEventMap on destroy', async () => {
+    const result = await page.evaluate(`
+      const { Replayer } = rrweb;
+      const replayer = new Replayer(events);
+      replayer.play();
+      replayer.destroy();
+      ({
+        imageMapSize: replayer['imageMap'].size,
+        canvasEventMapSize: replayer['canvasEventMap'].size,
+      });
+    `);
+    expect(result).toEqual({
+      imageMapSize: 0,
+      canvasEventMapSize: 0,
+    });
+  });
+
+  it('should be idempotent when calling destroy twice', async () => {
+    const result = await page.evaluate(`
+      const { Replayer } = rrweb;
+      const replayer = new Replayer(events);
+      replayer.play();
+      replayer.destroy();
+      replayer.destroy();
+      'ok';
+    `);
+    expect(result).toEqual('ok');
+  });
+
+  it('should not leak state across mount/unmount cycles', async () => {
+    const result = await page.evaluate(`
+      const { Replayer } = rrweb;
+
+      const replayer1 = new Replayer(events);
+      replayer1.play();
+      replayer1.destroy();
+
+      const replayer2 = new Replayer(events);
+      replayer2.play();
+
+      const wrappers = document.querySelectorAll('.replayer-wrapper');
+      const result = {
+        wrapperCount: wrappers.length,
+        imageMapSize: replayer2['imageMap'].size,
+        serviceStatus: replayer2.service.status,
+      };
+
+      replayer2.destroy();
+      result;
+    `);
+    expect(result).toEqual({
+      wrapperCount: 1,
+      // @xstate/fsm InterpreterStatus.Running === 1
+      serviceStatus: 1,
+      imageMapSize: 0,
+    });
+  });
+
   it('can replay adopted stylesheet events', async () => {
     await page.evaluate(`
       events = ${JSON.stringify(adoptedStyleSheet)};
