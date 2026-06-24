@@ -286,6 +286,93 @@ export default class MutationBuffer {
       }
       return nextId;
     };
+    // Cap ancestor walks to avoid stack overflow on pathological DOM nesting.
+    // 20 is well above typical DOM depth but below stack limits.
+    const MAX_GAP_DEPTH = 20;
+    // Serializes a single gap node (present in DOM, absent from mirror).
+    // Uses skipChild: true — only the node itself is serialized. Other
+    // children of the gap node that were also unobserved are NOT captured;
+    // this is a known limitation that avoids conflicting with nodes already
+    // pending in addedSet.
+    const serializeGapNode = (gapNode: Node): boolean => {
+      if (this.addedSet.has(gapNode) || this.movedSet.has(gapNode)) {
+        return false;
+      }
+      const gapParent = dom.parentNode(gapNode);
+      if (!gapParent) return false;
+      const gapParentId = this.mirror.getId(gapParent);
+      if (gapParentId === -1 || gapParentId === IGNORED_NODE) return false;
+      const gapNextId = getNextId(gapNode);
+      const sn = serializeNodeWithId(gapNode, {
+        doc: this.doc,
+        mirror: this.mirror,
+        blockClass: this.blockClass,
+        blockSelector: this.blockSelector,
+        maskTextClass: this.maskTextClass,
+        maskTextSelector: this.maskTextSelector,
+        skipChild: true,
+        newlyAddedElement: true,
+        inlineStylesheet: this.inlineStylesheet,
+        maskInputOptions: this.maskInputOptions,
+        maskTextFn: this.maskTextFn,
+        maskInputFn: this.maskInputFn,
+        slimDOMOptions: this.slimDOMOptions,
+        dataURLOptions: this.dataURLOptions,
+        recordCanvas: this.recordCanvas,
+        inlineImages: this.inlineImages,
+        onSerialize: (currentN) => {
+          if (isSerializedIframe(currentN, this.mirror)) {
+            this.iframeManager.addIframe(currentN as HTMLIFrameElement);
+          }
+          if (isSerializedStylesheet(currentN, this.mirror)) {
+            this.stylesheetManager.trackLinkElement(
+              currentN as HTMLLinkElement,
+            );
+          }
+          if (hasShadowRoot(currentN)) {
+            this.shadowDomManager.addShadowRoot(
+              // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+              dom.shadowRoot(currentN)!,
+              this.doc,
+            );
+          }
+        },
+        onIframeLoad: (iframe, childSn) => {
+          this.iframeManager.attachIframe(iframe, childSn);
+          this.shadowDomManager.observeAttachShadow(iframe);
+        },
+        onStylesheetLoad: (link, childSn) => {
+          this.stylesheetManager.attachLinkElement(link, childSn);
+        },
+      });
+      if (sn) {
+        adds.push({
+          parentId: gapParentId,
+          nextId: gapNextId === -1 ? null : gapNextId,
+          node: sn,
+        });
+        addedIds.add(sn.id);
+        return true;
+      }
+      return false;
+    };
+    const resolveAncestorGap = (n: Node, depth = 0): boolean => {
+      if (depth >= MAX_GAP_DEPTH) return false;
+      const parent = dom.parentNode(n);
+      if (!parent || !inDom(parent)) return false;
+      // Cross-shadow-root gap resolution is not supported — the existing
+      // retry loop handles direct shadow-root children via host remapping.
+      if (isShadowRoot(parent)) return false;
+      const parentMirrorId = this.mirror.getId(parent);
+      if (parentMirrorId === IGNORED_NODE) return false;
+      if (parentMirrorId !== -1) return true;
+      if (isBlocked(parent, this.blockClass, this.blockSelector, false)) {
+        return false;
+      }
+      if (isIgnored(parent, this.mirror, this.slimDOMOptions)) return false;
+      if (!resolveAncestorGap(parent, depth + 1)) return false;
+      return serializeGapNode(parent);
+    };
     const pushAdd = (n: Node) => {
       const parent = dom.parentNode(n);
       if (!parent || !inDom(n)) {
@@ -304,9 +391,17 @@ export default class MutationBuffer {
         }
       }
 
-      const parentId = isShadowRoot(parent)
+      let parentId = isShadowRoot(parent)
         ? this.mirror.getId(getShadowHost(n))
         : this.mirror.getId(parent);
+
+      if (parentId === -1) {
+        if (resolveAncestorGap(n)) {
+          parentId = isShadowRoot(parent)
+            ? this.mirror.getId(getShadowHost(n))
+            : this.mirror.getId(parent);
+        }
+      }
 
       const nextId = getNextId(n);
       if (parentId === -1 || nextId === -1) {
@@ -427,6 +522,10 @@ export default class MutationBuffer {
                   node = _node;
                   break;
                 }
+              }
+              if (resolveAncestorGap(unhandledNode)) {
+                node = _node;
+                break;
               }
             }
           }
