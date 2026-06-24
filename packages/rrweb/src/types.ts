@@ -82,6 +82,14 @@ export type recordOptions<T> = {
   mousemoveWait?: number;
   keepIframeSrcFn?: KeepIframeSrcFn;
   errorHandler?: ErrorHandler;
+  /**
+   * If the initial full snapshot contains fewer than this many nodes,
+   * schedule a checkout full snapshot after a short delay to capture
+   * the fully-rendered SPA DOM.
+   *
+   * Set to 0 or false to disable. Default is 200.
+   */
+  checkoutIfSmallInitialSnapshot?: number | false;
 };
 
 export type observerParam = {
