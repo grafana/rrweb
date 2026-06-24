@@ -289,6 +289,16 @@ export default class MutationBuffer {
     // Cap ancestor walks to avoid stack overflow on pathological DOM nesting.
     // 20 is well above typical DOM depth but below stack limits.
     const MAX_GAP_DEPTH = 20;
+    // Persistent debug log — survives cold mount bursts where console hooks
+    // can't be installed in time. Read via window.__rrwebGapLog after load.
+    type GapLogEntry = { ts: number; fn: string; tag: string; msg: string; depth?: number; mirrorId?: number };
+    const win = this.doc.defaultView as (Window & { __rrwebGapLog?: GapLogEntry[] }) | null;
+    if (win && !win.__rrwebGapLog) win.__rrwebGapLog = [];
+    const gapLog = (fn: string, tag: string, msg: string, extra?: Partial<GapLogEntry>) => {
+      const entry: GapLogEntry = { ts: performance.now(), fn, tag, msg, ...extra };
+      console.log(`[rrweb:gap] ${fn}: ${msg} <${tag}>`, extra || '');
+      if (win?.__rrwebGapLog) win.__rrwebGapLog.push(entry);
+    };
     // Serializes a single gap node (present in DOM, absent from mirror).
     // Uses skipChild: true — only the node itself is serialized. Other
     // children of the gap node that were also unobserved are NOT captured;
@@ -296,35 +306,25 @@ export default class MutationBuffer {
     // pending in addedSet.
     const serializeGapNode = (gapNode: Node): boolean => {
       const gapNodeTag = (gapNode as Element).tagName || gapNode.nodeName;
-      console.log(
-        `[rrweb:gap] serializeGapNode called for <${gapNodeTag}>`,
-        gapNode,
-      );
+      const gapNodeClass = (gapNode as Element).className || '';
+      gapLog('serializeGapNode', gapNodeTag, 'called', { msg: `class="${gapNodeClass}"` });
       if (this.movedSet.has(gapNode)) {
-        console.log(
-          `[rrweb:gap]   MOVED: <${gapNodeTag}> in movedSet — already has mirror id ${this.mirror.getId(gapNode)}, returning true`,
-        );
+        gapLog('serializeGapNode', gapNodeTag, `MOVED — already has mirror id ${this.mirror.getId(gapNode)}`);
         return true;
       }
       if (this.addedSet.has(gapNode)) {
-        console.log(
-          `[rrweb:gap]   PROMOTING: <${gapNodeTag}> from addedSet — serializing now as gap ancestor and removing from addedSet`,
-        );
+        gapLog('serializeGapNode', gapNodeTag, 'PROMOTING from addedSet — serializing now');
         this.addedSet.delete(gapNode);
         // fall through to serialize below
       }
       const gapParent = dom.parentNode(gapNode);
       if (!gapParent) {
-        console.log(
-          `[rrweb:gap]   SKIP: <${gapNodeTag}> has no parent`,
-        );
+        gapLog('serializeGapNode', gapNodeTag, 'BAIL: no parent');
         return false;
       }
       const gapParentId = this.mirror.getId(gapParent);
       if (gapParentId === -1 || gapParentId === IGNORED_NODE) {
-        console.log(
-          `[rrweb:gap]   SKIP: <${gapNodeTag}> parent mirror id=${gapParentId} (unresolved or IGNORED)`,
-        );
+        gapLog('serializeGapNode', gapNodeTag, `BAIL: parent mirrorId=${gapParentId}`);
         return false;
       }
       const gapNextId = getNextId(gapNode);
@@ -371,9 +371,7 @@ export default class MutationBuffer {
         },
       });
       if (sn) {
-        console.log(
-          `[rrweb:gap]   SUCCESS: serialized gap <${gapNodeTag}> as id=${sn.id}, parentId=${gapParentId}, nextId=${gapNextId === -1 ? null : gapNextId}`,
-        );
+        gapLog('serializeGapNode', gapNodeTag, `SUCCESS id=${sn.id} parentId=${gapParentId} nextId=${gapNextId === -1 ? null : gapNextId}`);
         adds.push({
           parentId: gapParentId,
           nextId: gapNextId === -1 ? null : gapNextId,
@@ -382,69 +380,53 @@ export default class MutationBuffer {
         addedIds.add(sn.id);
         return true;
       }
-      console.log(
-        `[rrweb:gap]   FAIL: serializeNodeWithId returned null for <${gapNodeTag}>`,
-      );
+      gapLog('serializeGapNode', gapNodeTag, 'FAIL: serializeNodeWithId returned null');
       return false;
     };
     const resolveAncestorGap = (n: Node, depth = 0): boolean => {
       const nTag = (n as Element).tagName || n.nodeName;
-      console.log(
-        `[rrweb:gap] resolveAncestorGap called for <${nTag}>, depth=${depth}`,
-      );
+      const nClass = (n as Element).className || '';
+      gapLog('resolveAncestorGap', nTag, `called class="${nClass}"`, { depth });
       if (depth >= MAX_GAP_DEPTH) {
-        console.log(
-          `[rrweb:gap]   BAIL: depth ${depth} >= MAX_GAP_DEPTH ${MAX_GAP_DEPTH}`,
-        );
+        gapLog('resolveAncestorGap', nTag, `BAIL: depth ${depth} >= MAX_GAP_DEPTH`, { depth });
         return false;
       }
       const parent = dom.parentNode(n);
-      if (!parent || !inDom(parent)) {
-        console.log(
-          `[rrweb:gap]   BAIL: <${nTag}> has no parent or parent not in DOM`,
-        );
+      if (!parent) {
+        gapLog('resolveAncestorGap', nTag, 'BAIL: no parent node', { depth });
+        return false;
+      }
+      if (!inDom(parent)) {
+        const parentTag = (parent as Element).tagName || parent.nodeName;
+        gapLog('resolveAncestorGap', nTag, `BAIL: parent <${parentTag}> not in DOM (nodeType=${parent.nodeType})`, { depth });
         return false;
       }
       const parentTag = (parent as Element).tagName || parent.nodeName;
       // Cross-shadow-root gap resolution is not supported — the existing
       // retry loop handles direct shadow-root children via host remapping.
       if (isShadowRoot(parent)) {
-        console.log(
-          `[rrweb:gap]   BAIL: parent of <${nTag}> is a shadow root`,
-        );
+        gapLog('resolveAncestorGap', nTag, `BAIL: parent is shadow root`, { depth });
         return false;
       }
       const parentMirrorId = this.mirror.getId(parent);
-      console.log(
-        `[rrweb:gap]   parent <${parentTag}> mirrorId=${parentMirrorId}`,
-      );
+      gapLog('resolveAncestorGap', nTag, `parent <${parentTag}> mirrorId=${parentMirrorId}`, { depth, mirrorId: parentMirrorId });
       if (parentMirrorId === IGNORED_NODE) {
-        console.log(
-          `[rrweb:gap]   BAIL: parent <${parentTag}> is IGNORED_NODE`,
-        );
+        gapLog('resolveAncestorGap', nTag, `BAIL: parent <${parentTag}> IGNORED_NODE`, { depth });
         return false;
       }
       if (parentMirrorId !== -1) {
-        console.log(
-          `[rrweb:gap]   RESOLVED: parent <${parentTag}> already mirrored (id=${parentMirrorId})`,
-        );
+        gapLog('resolveAncestorGap', nTag, `RESOLVED: parent <${parentTag}> mirrored id=${parentMirrorId}`, { depth, mirrorId: parentMirrorId });
         return true;
       }
       if (isBlocked(parent, this.blockClass, this.blockSelector, false)) {
-        console.log(
-          `[rrweb:gap]   BAIL: parent <${parentTag}> is blocked`,
-        );
+        gapLog('resolveAncestorGap', nTag, `BAIL: parent <${parentTag}> blocked`, { depth });
         return false;
       }
       if (isIgnored(parent, this.mirror, this.slimDOMOptions)) {
-        console.log(
-          `[rrweb:gap]   BAIL: parent <${parentTag}> is ignored (slimDOM)`,
-        );
+        gapLog('resolveAncestorGap', nTag, `BAIL: parent <${parentTag}> ignored (slimDOM)`, { depth });
         return false;
       }
-      console.log(
-        `[rrweb:gap]   RECURSE: walking up from <${nTag}> to <${parentTag}> (depth ${depth} -> ${depth + 1})`,
-      );
+      gapLog('resolveAncestorGap', nTag, `RECURSE up to <${parentTag}> depth ${depth}->${depth + 1}`, { depth });
       if (!resolveAncestorGap(parent, depth + 1)) return false;
       return serializeGapNode(parent);
     };
@@ -472,20 +454,14 @@ export default class MutationBuffer {
 
       if (parentId === -1) {
         const pushAddTag = (n as Element).tagName || n.nodeName;
-        console.log(
-          `[rrweb:gap] pushAdd: parentId=-1 for <${pushAddTag}>, attempting gap resolution`,
-        );
+        gapLog('pushAdd', pushAddTag, 'parentId=-1, attempting gap resolution');
         if (resolveAncestorGap(n)) {
           parentId = isShadowRoot(parent)
             ? this.mirror.getId(getShadowHost(n))
             : this.mirror.getId(parent);
-          console.log(
-            `[rrweb:gap] pushAdd: gap resolved for <${pushAddTag}>, new parentId=${parentId}`,
-          );
+          gapLog('pushAdd', pushAddTag, `gap resolved, new parentId=${parentId}`);
         } else {
-          console.log(
-            `[rrweb:gap] pushAdd: gap resolution FAILED for <${pushAddTag}>, will defer to addList`,
-          );
+          gapLog('pushAdd', pushAddTag, 'gap resolution FAILED, deferring to addList');
         }
       }
 
@@ -610,19 +586,13 @@ export default class MutationBuffer {
                 }
               }
               const retryTag = (unhandledNode as unknown as Element).tagName || unhandledNode.nodeName;
-              console.log(
-                `[rrweb:gap] addList retry: attempting gap resolution for <${retryTag}>`,
-              );
+              gapLog('addList', retryTag, 'retry: attempting gap resolution');
               if (resolveAncestorGap(unhandledNode)) {
-                console.log(
-                  `[rrweb:gap] addList retry: gap resolved for <${retryTag}>`,
-                );
+                gapLog('addList', retryTag, 'retry: gap resolved');
                 node = _node;
                 break;
               } else {
-                console.log(
-                  `[rrweb:gap] addList retry: gap resolution FAILED for <${retryTag}>`,
-                );
+                gapLog('addList', retryTag, 'retry: gap resolution FAILED');
               }
             }
           }
@@ -634,15 +604,11 @@ export default class MutationBuffer {
          * it may be a bug or corner case. We need to escape the
          * dead while loop at once.
          */
-        console.log(
-          `[rrweb:gap] addList: GIVING UP — ${addList.length} nodes could not find a serialized parent, dropping them all`,
-        );
+        gapLog('addList', '-', `GIVING UP — ${addList.length} nodes unresolvable, dropping all`);
         while (addList.head) {
           const droppedTag = (addList.head.value as unknown as Element).tagName || addList.head.value.nodeName;
-          console.log(
-            `[rrweb:gap] addList: dropping <${droppedTag}>`,
-            addList.head.value,
-          );
+          const droppedClass = (addList.head.value as unknown as Element).className || '';
+          gapLog('addList', droppedTag, `DROPPED class="${droppedClass}"`);
           addList.removeNode(addList.head.value);
         }
         break;
