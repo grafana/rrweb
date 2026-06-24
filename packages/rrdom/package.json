@@ -30,7 +30,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/grafana/rrweb"
+    "url": "https://github.com/grafana/rrweb.git"
   },
   "scripts": {
     "dev": "vite build --watch",
