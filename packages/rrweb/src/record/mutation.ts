@@ -18,6 +18,7 @@ import type {
   attributeCursor,
   removedNodeMutation,
   addedNodeMutation,
+  styleOMValue,
   Optional,
 } from '@grafana/rrweb-types';
 import {
@@ -33,6 +34,53 @@ import {
   closestElementOfNode,
 } from '../utils';
 import dom from '@grafana/rrweb-utils';
+
+/**
+ * Decides whether the compact style diff (individual property changes) is
+ * safe to use instead of the full style attribute string.
+ *
+ * When a CSS shorthand property contains `var()`, browsers expand it into
+ * individual longhands whose `getPropertyValue()` returns the empty string
+ * (the CSS spec calls these "pending-substitution values"). Recording those
+ * empty longhands would delete the styles on replay.
+ *
+ * The original check counted `var(` occurrences, but that misses cases
+ * where the browser lists the shorthand in `element.style` alongside its
+ * empty longhands — the shorthand captures the `var()`, so counts match,
+ * but the empty longhands still corrupt replay.
+ */
+export function shouldUseCompactStyleDiff(
+  styleDiff: styleOMValue,
+  unchangedStyles: styleOMValue,
+  styleAttributeValue: string,
+): boolean {
+  const diffAsStr = JSON.stringify(styleDiff);
+  const unchangedAsStr = JSON.stringify(unchangedStyles);
+
+  if (diffAsStr.length >= styleAttributeValue.length) {
+    return false;
+  }
+
+  const styleVarCount = styleAttributeValue.split('var(').length;
+  const diffVarCount = (diffAsStr + unchangedAsStr).split('var(').length;
+
+  if (diffVarCount !== styleVarCount) {
+    return false;
+  }
+
+  // Even when var() counts match, shorthand expansion may have produced
+  // empty longhand entries. If the style contains var() and the diff has
+  // empty or deleted non-custom properties, those likely came from
+  // shorthand expansion and would corrupt replay.
+  if (styleVarCount > 1) {
+    for (const [prop, val] of Object.entries(styleDiff)) {
+      if (prop.startsWith('--')) continue;
+      if (val === '' || val === false) return false;
+    }
+  }
+
+  return true;
+}
 
 type DoubleLinkedListNode = {
   previous: DoubleLinkedListNode | null;
@@ -470,19 +518,14 @@ export default class MutationBuffer {
         .map((attribute) => {
           const { attributes } = attribute;
           if (typeof attributes.style === 'string') {
-            const diffAsStr = JSON.stringify(attribute.styleDiff);
-            const unchangedAsStr = JSON.stringify(attribute._unchangedStyles);
-            // check if the style diff is actually shorter than the regular string based mutation
-            // (which was the whole point of #464 'compact style mutation').
-            if (diffAsStr.length < attributes.style.length) {
-              // also: CSSOM fails badly when var() is present on shorthand properties, so only proceed with
-              // the compact style mutation if these have all been accounted for
-              if (
-                (diffAsStr + unchangedAsStr).split('var(').length ===
-                attributes.style.split('var(').length
-              ) {
-                attributes.style = attribute.styleDiff;
-              }
+            if (
+              shouldUseCompactStyleDiff(
+                attribute.styleDiff,
+                attribute._unchangedStyles,
+                attributes.style,
+              )
+            ) {
+              attributes.style = attribute.styleDiff;
             }
           }
           return {
