@@ -28,6 +28,7 @@ export class ShadowDomManager {
   private bypassOptions: BypassOptions;
   private mirror: Mirror;
   private restoreHandlers: (() => void)[] = [];
+  private resetting = false;
 
   constructor(options: {
     mutationCb: mutationCallBack;
@@ -144,14 +145,20 @@ export class ShadowDomManager {
   }
 
   public reset() {
-    this.restoreHandlers.forEach((handler) => {
-      try {
-        handler();
-      } catch (e) {
-        //
-      }
-    });
-    this.restoreHandlers = [];
-    this.shadowDoms = new WeakSet();
+    if (this.resetting) return;
+    this.resetting = true;
+    try {
+      this.restoreHandlers.forEach((handler) => {
+        try {
+          handler();
+        } catch (e) {
+          //
+        }
+      });
+      this.restoreHandlers = [];
+      this.shadowDoms = new WeakSet();
+    } finally {
+      this.resetting = false;
+    }
   }
 }
