@@ -222,6 +222,79 @@ describe('diff algorithm for rrdom', () => {
       );
     });
 
+    it('should not re-apply already flushed style rules on subsequent diffs', () => {
+      document.write('<html></html>');
+      const element = document.createElement('style');
+      document.documentElement.appendChild(element);
+      const rrDocument = new RRDocument();
+      const rrStyle = rrDocument.createElement('style');
+      const styleData: styleSheetRuleData = {
+        source: IncrementalSource.StyleSheetRule,
+        adds: [
+          {
+            rule: 'div{color: black;}',
+            index: 0,
+          },
+        ],
+      };
+      rrStyle.rules = [styleData];
+      replayer.applyStyleSheetMutation = vi.fn();
+
+      diff(element, rrStyle, replayer);
+      expect(replayer.applyStyleSheetMutation).toHaveBeenCalledTimes(1);
+
+      diff(element, rrStyle, replayer);
+      expect(replayer.applyStyleSheetMutation).toHaveBeenCalledTimes(1);
+
+      const newStyleData: styleSheetRuleData = {
+        source: IncrementalSource.StyleSheetRule,
+        adds: [
+          {
+            rule: 'span{color: red;}',
+            index: 1,
+          },
+        ],
+      };
+      rrStyle.rules.push(newStyleData);
+      diff(element, rrStyle, replayer);
+      expect(replayer.applyStyleSheetMutation).toHaveBeenCalledTimes(2);
+      expect(replayer.applyStyleSheetMutation).toHaveBeenLastCalledWith(
+        newStyleData,
+        element.sheet,
+      );
+    });
+
+    it('should apply rules after clearRules resets the flushed index', () => {
+      document.write('<html></html>');
+      const element = document.createElement('style');
+      document.documentElement.appendChild(element);
+      const rrDocument = new RRDocument();
+      const rrStyle = rrDocument.createElement('style');
+      const styleData: styleSheetRuleData = {
+        source: IncrementalSource.StyleSheetRule,
+        adds: [{ rule: 'div{color: black;}', index: 0 }],
+      };
+      rrStyle.rules = [styleData];
+      replayer.applyStyleSheetMutation = vi.fn();
+
+      diff(element, rrStyle, replayer);
+      expect(replayer.applyStyleSheetMutation).toHaveBeenCalledTimes(1);
+
+      rrStyle.clearRules();
+
+      const newStyleData: styleSheetRuleData = {
+        source: IncrementalSource.StyleSheetRule,
+        adds: [{ rule: 'span{color: red;}', index: 0 }],
+      };
+      rrStyle.rules.push(newStyleData);
+      diff(element, rrStyle, replayer);
+      expect(replayer.applyStyleSheetMutation).toHaveBeenCalledTimes(2);
+      expect(replayer.applyStyleSheetMutation).toHaveBeenLastCalledWith(
+        newStyleData,
+        element.sheet,
+      );
+    });
+
     it('should diff a canvas element', () => {
       const element = document.createElement('canvas');
       const rrDocument = new RRDocument();
