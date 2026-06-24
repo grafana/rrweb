@@ -89,6 +89,22 @@ describe('diff algorithm for rrdom', () => {
       expect(closeFn).toBeCalled();
     });
 
+    it('should not throw when dialog lacks matches() method', () => {
+      const tagName = 'DIALOG';
+      const node = document.createElement(tagName) as HTMLDialogElement;
+      Object.defineProperty(node, 'matches', { value: undefined });
+
+      const rrDocument = new RRDocument();
+      const rrNode = rrDocument.createElement(tagName);
+      rrNode.attributes = { rr_open_mode: 'modal', open: '' };
+
+      mirror.add(node, elementSn);
+      rrDocument.mirror.add(rrNode, elementSn);
+
+      expect(() => diff(node, rrNode, replayer)).not.toThrow();
+      expect(node.open).toBe(true);
+    });
+
     it('should not trigger `close` on rr_open_mode is kept', () => {
       const tagName = 'DIALOG';
       const node = document.createElement(tagName) as HTMLDialogElement;
