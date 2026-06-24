@@ -300,11 +300,18 @@ export default class MutationBuffer {
         `[rrweb:gap] serializeGapNode called for <${gapNodeTag}>`,
         gapNode,
       );
-      if (this.addedSet.has(gapNode) || this.movedSet.has(gapNode)) {
+      if (this.movedSet.has(gapNode)) {
         console.log(
-          `[rrweb:gap]   ALREADY QUEUED: <${gapNodeTag}> in addedSet/movedSet — gap is handled by normal processing, returning true`,
+          `[rrweb:gap]   MOVED: <${gapNodeTag}> in movedSet — already has mirror id ${this.mirror.getId(gapNode)}, returning true`,
         );
         return true;
+      }
+      if (this.addedSet.has(gapNode)) {
+        console.log(
+          `[rrweb:gap]   PROMOTING: <${gapNodeTag}> from addedSet — serializing now as gap ancestor and removing from addedSet`,
+        );
+        this.addedSet.delete(gapNode);
+        // fall through to serialize below
       }
       const gapParent = dom.parentNode(gapNode);
       if (!gapParent) {
