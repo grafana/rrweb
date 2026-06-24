@@ -98,6 +98,7 @@ function record<T = eventWithTime>(
     plugins,
     keepIframeSrcFn = () => false,
     ignoreCSSAttributes = new Set([]),
+    resnapshotOnOrphanDrop = false,
     errorHandler,
   } = options;
 
@@ -166,6 +167,35 @@ function record<T = eventWithTime>(
 
   let lastFullSnapshotEvent: eventWithTime;
   let incrementalSnapshotCount = 0;
+  const ORPHAN_RESNAPSHOT_COOLDOWN_MS = 5000;
+  let lastOrphanSnapshotTime = 0;
+  let pendingOrphanTimer: ReturnType<typeof setTimeout> | null = null;
+  const onOrphansDropped = (count: number) => {
+    if (!resnapshotOnOrphanDrop) return;
+    const now = nowTimestamp();
+    const elapsed = now - lastOrphanSnapshotTime;
+    if (elapsed >= ORPHAN_RESNAPSHOT_COOLDOWN_MS) {
+      lastOrphanSnapshotTime = now;
+      console.warn(
+        `[rrweb] Dropped ${count} orphan mutation(s), scheduling full re-snapshot`,
+      );
+      setTimeout(() => {
+        if (recording) takeFullSnapshot(true);
+      }, 0);
+    } else if (!pendingOrphanTimer) {
+      const remaining = ORPHAN_RESNAPSHOT_COOLDOWN_MS - elapsed;
+      pendingOrphanTimer = setTimeout(() => {
+        pendingOrphanTimer = null;
+        if (recording) {
+          lastOrphanSnapshotTime = nowTimestamp();
+          console.warn(
+            `[rrweb] Orphan mutations detected during cooldown, scheduling deferred re-snapshot`,
+          );
+          takeFullSnapshot(true);
+        }
+      }, remaining);
+    }
+  };
 
   const eventProcessor = (e: eventWithTime): T => {
     for (const plugin of plugins || []) {
@@ -330,6 +360,7 @@ function record<T = eventWithTime>(
       canvasManager,
       keepIframeSrcFn,
       processedNodeManager,
+      onOrphansDropped,
     },
     mirror,
   });
@@ -534,6 +565,7 @@ function record<T = eventWithTime>(
           processedNodeManager,
           canvasManager,
           ignoreCSSAttributes,
+          onOrphansDropped,
           plugins:
             plugins
               ?.filter((p) => p.observer)
@@ -615,6 +647,10 @@ function record<T = eventWithTime>(
         }
       });
       processedNodeManager.destroy();
+      if (pendingOrphanTimer) {
+        clearTimeout(pendingOrphanTimer);
+        pendingOrphanTimer = null;
+      }
       recording = false;
       unregisterErrorHandler();
     };
