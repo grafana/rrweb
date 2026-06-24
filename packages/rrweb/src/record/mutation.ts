@@ -302,9 +302,9 @@ export default class MutationBuffer {
       );
       if (this.addedSet.has(gapNode) || this.movedSet.has(gapNode)) {
         console.log(
-          `[rrweb:gap]   SKIP: <${gapNodeTag}> already in addedSet/movedSet`,
+          `[rrweb:gap]   ALREADY QUEUED: <${gapNodeTag}> in addedSet/movedSet — gap is handled by normal processing, returning true`,
         );
-        return false;
+        return true;
       }
       const gapParent = dom.parentNode(gapNode);
       if (!gapParent) {
@@ -602,7 +602,7 @@ export default class MutationBuffer {
                   break;
                 }
               }
-              const retryTag = (unhandledNode as Element).tagName || unhandledNode.nodeName;
+              const retryTag = (unhandledNode as unknown as Element).tagName || unhandledNode.nodeName;
               console.log(
                 `[rrweb:gap] addList retry: attempting gap resolution for <${retryTag}>`,
               );
@@ -631,7 +631,7 @@ export default class MutationBuffer {
           `[rrweb:gap] addList: GIVING UP — ${addList.length} nodes could not find a serialized parent, dropping them all`,
         );
         while (addList.head) {
-          const droppedTag = (addList.head.value as Element).tagName || addList.head.value.nodeName;
+          const droppedTag = (addList.head.value as unknown as Element).tagName || addList.head.value.nodeName;
           console.log(
             `[rrweb:gap] addList: dropping <${droppedTag}>`,
             addList.head.value,
