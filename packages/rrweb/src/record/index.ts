@@ -356,57 +356,63 @@ function record<T = eventWithTime>(
     shadowDomManager.init();
 
     mutationBuffers.forEach((buf) => buf.lock()); // don't allow any mirror modifications during snapshotting
-    const node = snapshot(document, {
-      mirror,
-      blockClass,
-      blockSelector,
-      maskTextClass,
-      maskTextSelector,
-      inlineStylesheet,
-      maskAllInputs: maskInputOptions,
-      maskTextFn,
-      maskInputFn,
-      slimDOM: slimDOMOptions,
-      dataURLOptions,
-      recordCanvas,
-      inlineImages,
-      onSerialize: (n) => {
-        if (isSerializedIframe(n, mirror)) {
-          iframeManager.addIframe(n as HTMLIFrameElement);
-        }
-        if (isSerializedStylesheet(n, mirror)) {
-          stylesheetManager.trackLinkElement(n as HTMLLinkElement);
-        }
-        if (hasShadowRoot(n)) {
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-          shadowDomManager.addShadowRoot(dom.shadowRoot(n as Node)!, document);
-        }
-      },
-      onIframeLoad: (iframe, childSn) => {
-        iframeManager.attachIframe(iframe, childSn);
-        shadowDomManager.observeAttachShadow(iframe);
-      },
-      onStylesheetLoad: (linkEl, childSn) => {
-        stylesheetManager.attachLinkElement(linkEl, childSn);
-      },
-      keepIframeSrcFn,
-    });
-
-    if (!node) {
-      return console.warn('Failed to snapshot the document');
-    }
-
-    wrappedEmit(
-      {
-        type: EventType.FullSnapshot,
-        data: {
-          node,
-          initialOffset: getWindowScroll(window),
+    try {
+      const node = snapshot(document, {
+        mirror,
+        blockClass,
+        blockSelector,
+        maskTextClass,
+        maskTextSelector,
+        inlineStylesheet,
+        maskAllInputs: maskInputOptions,
+        maskTextFn,
+        maskInputFn,
+        slimDOM: slimDOMOptions,
+        dataURLOptions,
+        recordCanvas,
+        inlineImages,
+        onSerialize: (n) => {
+          if (isSerializedIframe(n, mirror)) {
+            iframeManager.addIframe(n as HTMLIFrameElement);
+          }
+          if (isSerializedStylesheet(n, mirror)) {
+            stylesheetManager.trackLinkElement(n as HTMLLinkElement);
+          }
+          if (hasShadowRoot(n)) {
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+            shadowDomManager.addShadowRoot(
+              dom.shadowRoot(n as Node)!,
+              document,
+            );
+          }
         },
-      },
-      isCheckout,
-    );
-    mutationBuffers.forEach((buf) => buf.unlock()); // generate & emit any mutations that happened during snapshotting, as can now apply against the newly built mirror
+        onIframeLoad: (iframe, childSn) => {
+          iframeManager.attachIframe(iframe, childSn);
+          shadowDomManager.observeAttachShadow(iframe);
+        },
+        onStylesheetLoad: (linkEl, childSn) => {
+          stylesheetManager.attachLinkElement(linkEl, childSn);
+        },
+        keepIframeSrcFn,
+      });
+
+      if (!node) {
+        return console.warn('Failed to snapshot the document');
+      }
+
+      wrappedEmit(
+        {
+          type: EventType.FullSnapshot,
+          data: {
+            node,
+            initialOffset: getWindowScroll(window),
+          },
+        },
+        isCheckout,
+      );
+    } finally {
+      mutationBuffers.forEach((buf) => buf.unlock()); // generate & emit any mutations that happened during snapshotting, as can now apply against the newly built mirror
+    }
 
     // Some old browsers don't support adoptedStyleSheets.
     if (document.adoptedStyleSheets && document.adoptedStyleSheets.length > 0)

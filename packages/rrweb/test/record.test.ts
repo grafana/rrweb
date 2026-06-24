@@ -1011,6 +1011,54 @@ describe('record', function (this: ISuite) {
       (window as any).stopRecord?.();
     });
   });
+
+  it('unlocks mutation buffers even when emit callback throws', async () => {
+    await ctx.page.evaluate(() => {
+      return new Promise<void>((resolve) => {
+        let shouldThrow = false;
+        const { record } = (window as unknown as IWindow).rrweb;
+        record({
+          emit: (event: eventWithTime) => {
+            if (shouldThrow && event.type === EventType.FullSnapshot) {
+              throw new Error('emit callback error');
+            }
+            (window as unknown as IWindow).emit(event);
+          },
+        });
+
+        // Recording is now active with observers running. Arm the throw
+        // and trigger a manual full snapshot re-take.
+        setTimeout(() => {
+          shouldThrow = true;
+          try {
+            record.takeFullSnapshot(true);
+          } catch {
+            // expected
+          }
+          shouldThrow = false;
+        }, 50);
+
+        // After the failed re-take, trigger a DOM mutation.
+        // Without the fix, buffers stay locked and this is silently lost.
+        setTimeout(() => {
+          const p = document.createElement('p');
+          p.textContent = 'after-throw';
+          document.body.appendChild(p);
+        }, 100);
+
+        setTimeout(() => {
+          resolve();
+        }, 250);
+      });
+    });
+
+    const mutationEvents = ctx.events.filter(
+      (e: eventWithTime) =>
+        e.type === EventType.IncrementalSnapshot &&
+        e.data.source === IncrementalSource.Mutation,
+    );
+    expect(mutationEvents.length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe('record iframes', function (this: ISuite) {
