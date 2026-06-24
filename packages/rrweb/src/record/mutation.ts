@@ -286,6 +286,15 @@ export default class MutationBuffer {
       }
       return nextId;
     };
+    const getPreviousId = (n: Node): number | null => {
+      let ps: Node | null = n;
+      let previousId: number | null = IGNORED_NODE;
+      while (previousId === IGNORED_NODE || previousId === -1) {
+        ps = ps && ps.previousSibling;
+        previousId = ps && this.mirror.getId(ps);
+      }
+      return previousId;
+    };
     const pushAdd = (n: Node) => {
       const parent = dom.parentNode(n);
       if (!parent || !inDom(n)) {
@@ -309,7 +318,7 @@ export default class MutationBuffer {
         : this.mirror.getId(parent);
 
       const nextId = getNextId(n);
-      if (parentId === -1 || nextId === -1) {
+      if (parentId === -1 || (nextId === -1 && getPreviousId(n) === null)) {
         return addList.addNode(n);
       }
       const sn = serializeNodeWithId(n, {
@@ -353,11 +362,15 @@ export default class MutationBuffer {
         cssCaptured,
       });
       if (sn) {
-        adds.push({
+        const add: addedNodeMutation = {
           parentId,
-          nextId,
+          nextId: nextId === -1 ? null : nextId,
           node: sn,
-        });
+        };
+        if (nextId === -1) {
+          add.previousId = getPreviousId(n);
+        }
+        adds.push(add);
         addedIds.add(sn.id);
       }
     };
@@ -390,12 +403,13 @@ export default class MutationBuffer {
     }
 
     let candidate: DoubleLinkedListNode | null = null;
+    let lastProgressLength = addList.length;
+    let stallCount = 0;
     while (addList.length) {
       let node: DoubleLinkedListNode | null = null;
       if (candidate) {
         const parentId = this.mirror.getId(dom.parentNode(candidate.value));
-        const nextId = getNextId(candidate.value);
-        if (parentId !== -1 && nextId !== -1) {
+        if (parentId !== -1) {
           node = candidate;
         }
       }
@@ -407,26 +421,20 @@ export default class MutationBuffer {
           // ensure _node is defined before attempting to find value
           if (_node) {
             const parentId = this.mirror.getId(dom.parentNode(_node.value));
-            const nextId = getNextId(_node.value);
 
-            if (nextId === -1) continue;
-            // nextId !== -1 && parentId !== -1
-            else if (parentId !== -1) {
+            if (parentId !== -1) {
               node = _node;
               break;
             }
-            // nextId !== -1 && parentId === -1 This branch can happen if the node is the child of shadow root
-            else {
-              const unhandledNode = _node.value;
-              const parent = dom.parentNode(unhandledNode);
-              // If the node is the direct child of a shadow root, we treat the shadow host as its parent node.
-              if (parent && parent.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
-                const shadowHost = dom.host(parent as ShadowRoot);
-                const parentId = this.mirror.getId(shadowHost);
-                if (parentId !== -1) {
-                  node = _node;
-                  break;
-                }
+            // parentId === -1: try shadow root resolution
+            const unhandledNode = _node.value;
+            const parent = dom.parentNode(unhandledNode);
+            if (parent && parent.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+              const shadowHost = dom.host(parent as ShadowRoot);
+              const shadowHostId = this.mirror.getId(shadowHost);
+              if (shadowHostId !== -1) {
+                node = _node;
+                break;
               }
             }
           }
@@ -446,6 +454,19 @@ export default class MutationBuffer {
       candidate = node.previous;
       addList.removeNode(node.value);
       pushAdd(node.value);
+
+      if (addList.length < lastProgressLength) {
+        lastProgressLength = addList.length;
+        stallCount = 0;
+      } else {
+        stallCount++;
+        if (stallCount > addList.length) {
+          while (addList.head) {
+            addList.removeNode(addList.head.value);
+          }
+          break;
+        }
+      }
     }
 
     const payload = {

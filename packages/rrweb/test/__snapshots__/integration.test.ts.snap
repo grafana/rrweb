@@ -1311,16 +1311,17 @@ exports[`record integration tests > can record and replay style mutations 1`] = 
           \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 3,
-            \\"textContent\\": \\".absolutify { background-image: url(\\\\\\"http://localhost:3030/rel\\\\\\"); }\\",
+            \\"textContent\\": \\"body { background-color: darkgreen; }\\",
             \\"id\\": 37
-          }
+          },
+          \\"previousId\\": 15
         },
         {
           \\"parentId\\": 13,
-          \\"nextId\\": 37,
+          \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 3,
-            \\"textContent\\": \\"body { background-color: darkgreen; }\\",
+            \\"textContent\\": \\".absolutify { background-image: url(\\\\\\"http://localhost:3030/rel\\\\\\"); }\\",
             \\"id\\": 38
           }
         }
@@ -1341,7 +1342,7 @@ exports[`record integration tests > can record and replay style mutations 1`] = 
           \\"value\\": \\"body { color: yellow; }\\"
         },
         {
-          \\"id\\": 38,
+          \\"id\\": 37,
           \\"value\\": \\"body { background-color: purple; }\\"
         }
       ],
@@ -1586,20 +1587,21 @@ exports[`record integration tests > can record and replay textarea mutations cor
             \\"type\\": 2,
             \\"tagName\\": \\"textarea\\",
             \\"attributes\\": {
-              \\"id\\": \\"ta2\\"
+              \\"value\\": \\"pre value\\"
             },
             \\"childNodes\\": [],
             \\"id\\": 21
-          }
+          },
+          \\"previousId\\": 20
         },
         {
           \\"parentId\\": 14,
-          \\"nextId\\": 21,
+          \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 2,
             \\"tagName\\": \\"textarea\\",
             \\"attributes\\": {
-              \\"value\\": \\"pre value\\"
+              \\"id\\": \\"ta2\\"
             },
             \\"childNodes\\": [],
             \\"id\\": 22
@@ -1615,13 +1617,13 @@ exports[`record integration tests > can record and replay textarea mutations cor
       \\"texts\\": [],
       \\"attributes\\": [
         {
-          \\"id\\": 22,
+          \\"id\\": 21,
           \\"attributes\\": {
             \\"value\\": \\"ok\\"
           }
         },
         {
-          \\"id\\": 21,
+          \\"id\\": 22,
           \\"attributes\\": {
             \\"value\\": \\"added\\"
           }
@@ -1638,7 +1640,7 @@ exports[`record integration tests > can record and replay textarea mutations cor
       \\"texts\\": [],
       \\"attributes\\": [
         {
-          \\"id\\": 22,
+          \\"id\\": 21,
           \\"attributes\\": {
             \\"value\\": \\"ok3\\"
           }
@@ -1647,7 +1649,7 @@ exports[`record integration tests > can record and replay textarea mutations cor
       \\"removes\\": [
         {
           \\"parentId\\": 14,
-          \\"id\\": 21
+          \\"id\\": 22
         }
       ],
       \\"adds\\": []
@@ -1658,7 +1660,7 @@ exports[`record integration tests > can record and replay textarea mutations cor
     \\"data\\": {
       \\"source\\": 2,
       \\"type\\": 5,
-      \\"id\\": 22
+      \\"id\\": 21
     }
   },
   {
@@ -1667,7 +1669,7 @@ exports[`record integration tests > can record and replay textarea mutations cor
       \\"source\\": 5,
       \\"text\\": \\"1ok3\\",
       \\"isChecked\\": false,
-      \\"id\\": 22
+      \\"id\\": 21
     }
   },
   {
@@ -1677,7 +1679,7 @@ exports[`record integration tests > can record and replay textarea mutations cor
       \\"texts\\": [],
       \\"attributes\\": [
         {
-          \\"id\\": 22,
+          \\"id\\": 21,
           \\"attributes\\": {
             \\"value\\": \\"ignore\\"
           }
@@ -1693,7 +1695,7 @@ exports[`record integration tests > can record and replay textarea mutations cor
       \\"source\\": 5,
       \\"text\\": \\"12ok3\\",
       \\"isChecked\\": false,
-      \\"id\\": 22
+      \\"id\\": 21
     }
   }
 ]"
@@ -9963,6 +9965,22 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"adds\\": [
         {
           \\"parentId\\": 14,
+          \\"nextId\\": null,
+          \\"node\\": {
+            \\"type\\": 2,
+            \\"tagName\\": \\"input\\",
+            \\"attributes\\": {
+              \\"size\\": \\"50\\",
+              \\"id\\": \\"input\\",
+              \\"value\\": \\"**********************\\"
+            },
+            \\"childNodes\\": [],
+            \\"id\\": 21
+          },
+          \\"previousId\\": 15
+        },
+        {
+          \\"parentId\\": 14,
           \\"nextId\\": 16,
           \\"node\\": {
             \\"type\\": 2,
@@ -9971,21 +9989,6 @@ exports[`record integration tests > should not record input values if dynamicall
               \\"id\\": \\"textarea\\",
               \\"size\\": \\"50\\",
               \\"value\\": \\"*************************\\"
-            },
-            \\"childNodes\\": [],
-            \\"id\\": 21
-          }
-        },
-        {
-          \\"parentId\\": 14,
-          \\"nextId\\": 21,
-          \\"node\\": {
-            \\"type\\": 2,
-            \\"tagName\\": \\"input\\",
-            \\"attributes\\": {
-              \\"size\\": \\"50\\",
-              \\"id\\": \\"input\\",
-              \\"value\\": \\"**********************\\"
             },
             \\"childNodes\\": [],
             \\"id\\": 22
@@ -10000,7 +10003,7 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"source\\": 5,
       \\"text\\": \\"**********************\\",
       \\"isChecked\\": false,
-      \\"id\\": 22
+      \\"id\\": 21
     }
   },
   {
@@ -10009,7 +10012,7 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"source\\": 5,
       \\"text\\": \\"*************************\\",
       \\"isChecked\\": false,
-      \\"id\\": 21
+      \\"id\\": 22
     }
   },
   {
@@ -10017,7 +10020,7 @@ exports[`record integration tests > should not record input values if dynamicall
     \\"data\\": {
       \\"source\\": 2,
       \\"type\\": 5,
-      \\"id\\": 22
+      \\"id\\": 21
     }
   },
   {
@@ -10026,7 +10029,7 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"source\\": 5,
       \\"text\\": \\"***********************\\",
       \\"isChecked\\": false,
-      \\"id\\": 22
+      \\"id\\": 21
     }
   },
   {
@@ -10035,7 +10038,7 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"source\\": 5,
       \\"text\\": \\"************************\\",
       \\"isChecked\\": false,
-      \\"id\\": 22
+      \\"id\\": 21
     }
   },
   {
@@ -10044,7 +10047,7 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"source\\": 5,
       \\"text\\": \\"*************************\\",
       \\"isChecked\\": false,
-      \\"id\\": 22
+      \\"id\\": 21
     }
   },
   {
@@ -10052,7 +10055,7 @@ exports[`record integration tests > should not record input values if dynamicall
     \\"data\\": {
       \\"source\\": 2,
       \\"type\\": 6,
-      \\"id\\": 22
+      \\"id\\": 21
     }
   },
   {
@@ -10060,7 +10063,7 @@ exports[`record integration tests > should not record input values if dynamicall
     \\"data\\": {
       \\"source\\": 2,
       \\"type\\": 5,
-      \\"id\\": 21
+      \\"id\\": 22
     }
   },
   {
@@ -10069,7 +10072,7 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"source\\": 5,
       \\"text\\": \\"**************************\\",
       \\"isChecked\\": false,
-      \\"id\\": 21
+      \\"id\\": 22
     }
   },
   {
@@ -10078,7 +10081,7 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"source\\": 5,
       \\"text\\": \\"***************************\\",
       \\"isChecked\\": false,
-      \\"id\\": 21
+      \\"id\\": 22
     }
   },
   {
@@ -10087,7 +10090,7 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"source\\": 5,
       \\"text\\": \\"****************************\\",
       \\"isChecked\\": false,
-      \\"id\\": 21
+      \\"id\\": 22
     }
   },
   {
@@ -10096,7 +10099,7 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"source\\": 5,
       \\"text\\": \\"**********************************************\\",
       \\"isChecked\\": false,
-      \\"id\\": 22
+      \\"id\\": 21
     }
   },
   {
@@ -10105,7 +10108,7 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"source\\": 5,
       \\"text\\": \\"*************************************************\\",
       \\"isChecked\\": false,
-      \\"id\\": 21
+      \\"id\\": 22
     }
   },
   {
@@ -10115,13 +10118,13 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"texts\\": [],
       \\"attributes\\": [
         {
-          \\"id\\": 22,
+          \\"id\\": 21,
           \\"attributes\\": {
             \\"value\\": \\"**********************************************************************************************\\"
           }
         },
         {
-          \\"id\\": 21,
+          \\"id\\": 22,
           \\"attributes\\": {
             \\"value\\": \\"*************************************************************************************************\\"
           }
@@ -10138,7 +10141,7 @@ exports[`record integration tests > should not record input values if dynamicall
       \\"texts\\": [],
       \\"attributes\\": [
         {
-          \\"id\\": 21,
+          \\"id\\": 22,
           \\"attributes\\": {
             \\"value\\": \\"****************************************************************\\"
           }
@@ -15484,19 +15487,20 @@ exports[`record integration tests > should record shadow DOM 1`] = `
           \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 2,
-            \\"tagName\\": \\"p\\",
+            \\"tagName\\": \\"span\\",
             \\"attributes\\": {},
             \\"childNodes\\": [],
             \\"id\\": 43,
             \\"isShadow\\": true
-          }
+          },
+          \\"previousId\\": 32
         },
         {
           \\"parentId\\": 22,
-          \\"nextId\\": 43,
+          \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 2,
-            \\"tagName\\": \\"span\\",
+            \\"tagName\\": \\"p\\",
             \\"attributes\\": {},
             \\"childNodes\\": [],
             \\"id\\": 44,
@@ -15515,7 +15519,7 @@ exports[`record integration tests > should record shadow DOM 1`] = `
       \\"removes\\": [],
       \\"adds\\": [
         {
-          \\"parentId\\": 43,
+          \\"parentId\\": 44,
           \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 2,
@@ -17474,22 +17478,24 @@ exports[`record integration tests > will serialize node before record 1`] = `
             \\"attributes\\": {},
             \\"childNodes\\": [],
             \\"id\\": 20
-          }
+          },
+          \\"previousId\\": 13
         },
         {
           \\"parentId\\": 10,
-          \\"nextId\\": 20,
+          \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 2,
             \\"tagName\\": \\"li\\",
             \\"attributes\\": {},
             \\"childNodes\\": [],
             \\"id\\": 21
-          }
+          },
+          \\"previousId\\": 20
         },
         {
           \\"parentId\\": 10,
-          \\"nextId\\": 21,
+          \\"nextId\\": null,
           \\"node\\": {
             \\"type\\": 2,
             \\"tagName\\": \\"li\\",
