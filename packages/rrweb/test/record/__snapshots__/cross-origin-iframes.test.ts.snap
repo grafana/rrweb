@@ -3916,6 +3916,30 @@ exports[`cross origin iframes > move-node.html > should record DOM node movement
       ],
       \\"adds\\": [
         {
+          \\"parentId\\": 17,
+          \\"nextId\\": null,
+          \\"node\\": {
+            \\"type\\": 2,
+            \\"tagName\\": \\"div\\",
+            \\"attributes\\": {},
+            \\"childNodes\\": [],
+            \\"rootId\\": 11,
+            \\"id\\": 33
+          }
+        },
+        {
+          \\"parentId\\": 33,
+          \\"nextId\\": null,
+          \\"node\\": {
+            \\"type\\": 2,
+            \\"tagName\\": \\"span\\",
+            \\"attributes\\": {},
+            \\"childNodes\\": [],
+            \\"rootId\\": 11,
+            \\"id\\": 24
+          }
+        },
+        {
           \\"parentId\\": 24,
           \\"nextId\\": 26,
           \\"node\\": {
@@ -3987,30 +4011,6 @@ exports[`cross origin iframes > move-node.html > should record DOM node movement
             \\"textContent\\": \\"\\\\n    \\",
             \\"rootId\\": 11,
             \\"id\\": 31
-          }
-        },
-        {
-          \\"parentId\\": 17,
-          \\"nextId\\": null,
-          \\"node\\": {
-            \\"type\\": 2,
-            \\"tagName\\": \\"div\\",
-            \\"attributes\\": {},
-            \\"childNodes\\": [],
-            \\"rootId\\": 11,
-            \\"id\\": 33
-          }
-        },
-        {
-          \\"parentId\\": 33,
-          \\"nextId\\": null,
-          \\"node\\": {
-            \\"type\\": 2,
-            \\"tagName\\": \\"span\\",
-            \\"attributes\\": {},
-            \\"childNodes\\": [],
-            \\"rootId\\": 11,
-            \\"id\\": 24
           }
         }
       ]
