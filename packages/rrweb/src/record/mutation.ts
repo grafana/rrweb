@@ -371,7 +371,7 @@ export default class MutationBuffer {
         },
       });
       if (sn) {
-        gapLog('serializeGapNode', gapNodeTag, `SUCCESS id=${sn.id} parentId=${gapParentId} nextId=${gapNextId === -1 ? null : gapNextId}`);
+        gapLog('serializeGapNode', gapNodeTag, `SUCCESS id=${sn.id} parentId=${gapParentId} nextId=${String(gapNextId === -1 ? null : gapNextId)}`);
         adds.push({
           parentId: gapParentId,
           nextId: gapNextId === -1 ? null : gapNextId,
