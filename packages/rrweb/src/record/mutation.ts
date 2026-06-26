@@ -286,6 +286,150 @@ export default class MutationBuffer {
       }
       return nextId;
     };
+    // Cap ancestor walks to avoid stack overflow on pathological DOM nesting.
+    // 20 is well above typical DOM depth but below stack limits.
+    const MAX_GAP_DEPTH = 20;
+    // Persistent debug log — survives cold mount bursts where console hooks
+    // can't be installed in time. Read via window.__rrwebGapLog after load.
+    type GapLogEntry = { ts: number; fn: string; tag: string; msg: string; depth?: number; mirrorId?: number };
+    const win = this.doc.defaultView as (Window & { __rrwebGapLog?: GapLogEntry[] }) | null;
+    if (win && !win.__rrwebGapLog) win.__rrwebGapLog = [];
+    const gapLog = (fn: string, tag: string, msg: string, extra?: Partial<GapLogEntry>) => {
+      const entry: GapLogEntry = { ts: performance.now(), fn, tag, msg, ...extra };
+      console.log(`[rrweb:gap] ${fn}: ${msg} <${tag}>`, extra || '');
+      if (win?.__rrwebGapLog) win.__rrwebGapLog.push(entry);
+    };
+    // Serializes a single gap node (present in DOM, absent from mirror).
+    // Uses skipChild: true — only the node itself is serialized. Other
+    // children of the gap node that were also unobserved are NOT captured;
+    // this is a known limitation that avoids conflicting with nodes already
+    // pending in addedSet.
+    const serializeGapNode = (gapNode: Node): boolean => {
+      const gapNodeTag = (gapNode as Element).tagName || gapNode.nodeName;
+      const gapNodeClass = (gapNode as Element).className || '';
+      gapLog('serializeGapNode', gapNodeTag, 'called', { msg: `class="${gapNodeClass}"` });
+      if (this.movedSet.has(gapNode)) {
+        gapLog('serializeGapNode', gapNodeTag, `MOVED — already has mirror id ${this.mirror.getId(gapNode)}`);
+        return true;
+      }
+      if (this.addedSet.has(gapNode)) {
+        gapLog('serializeGapNode', gapNodeTag, 'PROMOTING from addedSet — serializing now');
+        this.addedSet.delete(gapNode);
+        // fall through to serialize below
+      }
+      const gapParent = dom.parentNode(gapNode);
+      if (!gapParent) {
+        gapLog('serializeGapNode', gapNodeTag, 'BAIL: no parent');
+        return false;
+      }
+      const gapParentId = this.mirror.getId(gapParent);
+      if (gapParentId === -1 || gapParentId === IGNORED_NODE) {
+        gapLog('serializeGapNode', gapNodeTag, `BAIL: parent mirrorId=${gapParentId}`);
+        return false;
+      }
+      const gapNextId = getNextId(gapNode);
+      const sn = serializeNodeWithId(gapNode, {
+        doc: this.doc,
+        mirror: this.mirror,
+        blockClass: this.blockClass,
+        blockSelector: this.blockSelector,
+        maskTextClass: this.maskTextClass,
+        maskTextSelector: this.maskTextSelector,
+        skipChild: true,
+        newlyAddedElement: true,
+        inlineStylesheet: this.inlineStylesheet,
+        maskInputOptions: this.maskInputOptions,
+        maskTextFn: this.maskTextFn,
+        maskInputFn: this.maskInputFn,
+        slimDOMOptions: this.slimDOMOptions,
+        dataURLOptions: this.dataURLOptions,
+        recordCanvas: this.recordCanvas,
+        inlineImages: this.inlineImages,
+        onSerialize: (currentN) => {
+          if (isSerializedIframe(currentN, this.mirror)) {
+            this.iframeManager.addIframe(currentN as HTMLIFrameElement);
+          }
+          if (isSerializedStylesheet(currentN, this.mirror)) {
+            this.stylesheetManager.trackLinkElement(
+              currentN as HTMLLinkElement,
+            );
+          }
+          if (hasShadowRoot(currentN)) {
+            this.shadowDomManager.addShadowRoot(
+              // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+              dom.shadowRoot(currentN)!,
+              this.doc,
+            );
+          }
+        },
+        onIframeLoad: (iframe, childSn) => {
+          this.iframeManager.attachIframe(iframe, childSn);
+          this.shadowDomManager.observeAttachShadow(iframe);
+        },
+        onStylesheetLoad: (link, childSn) => {
+          this.stylesheetManager.attachLinkElement(link, childSn);
+        },
+      });
+      if (sn) {
+        gapLog('serializeGapNode', gapNodeTag, `SUCCESS id=${sn.id} parentId=${gapParentId} nextId=${String(gapNextId === -1 ? null : gapNextId)}`);
+        adds.push({
+          parentId: gapParentId,
+          nextId: gapNextId === -1 ? null : gapNextId,
+          node: sn,
+        });
+        addedIds.add(sn.id);
+        return true;
+      }
+      gapLog('serializeGapNode', gapNodeTag, 'FAIL: serializeNodeWithId returned null');
+      return false;
+    };
+    const resolveAncestorGap = (n: Node, depth = 0): boolean => {
+      const nTag = (n as Element).tagName || n.nodeName;
+      const nClass = (n as Element).className || '';
+      gapLog('resolveAncestorGap', nTag, `called class="${nClass}"`, { depth });
+      if (depth >= MAX_GAP_DEPTH) {
+        gapLog('resolveAncestorGap', nTag, `BAIL: depth ${depth} >= MAX_GAP_DEPTH`, { depth });
+        return false;
+      }
+      const parent = dom.parentNode(n);
+      if (!parent) {
+        gapLog('resolveAncestorGap', nTag, 'BAIL: no parent node', { depth });
+        return false;
+      }
+      if (!inDom(parent)) {
+        const parentTag = (parent as Element).tagName || parent.nodeName;
+        gapLog('resolveAncestorGap', nTag, `BAIL: parent <${parentTag}> not in DOM (nodeType=${parent.nodeType})`, { depth });
+        return false;
+      }
+      const parentTag = (parent as Element).tagName || parent.nodeName;
+      // Cross-shadow-root gap resolution is not supported — the existing
+      // retry loop handles direct shadow-root children via host remapping.
+      if (isShadowRoot(parent)) {
+        gapLog('resolveAncestorGap', nTag, `BAIL: parent is shadow root`, { depth });
+        return false;
+      }
+      const parentMirrorId = this.mirror.getId(parent);
+      gapLog('resolveAncestorGap', nTag, `parent <${parentTag}> mirrorId=${parentMirrorId}`, { depth, mirrorId: parentMirrorId });
+      if (parentMirrorId === IGNORED_NODE) {
+        gapLog('resolveAncestorGap', nTag, `BAIL: parent <${parentTag}> IGNORED_NODE`, { depth });
+        return false;
+      }
+      if (parentMirrorId !== -1) {
+        gapLog('resolveAncestorGap', nTag, `RESOLVED: parent <${parentTag}> mirrored id=${parentMirrorId}`, { depth, mirrorId: parentMirrorId });
+        return true;
+      }
+      if (isBlocked(parent, this.blockClass, this.blockSelector, false)) {
+        gapLog('resolveAncestorGap', nTag, `BAIL: parent <${parentTag}> blocked`, { depth });
+        return false;
+      }
+      if (isIgnored(parent, this.mirror, this.slimDOMOptions)) {
+        gapLog('resolveAncestorGap', nTag, `BAIL: parent <${parentTag}> ignored (slimDOM)`, { depth });
+        return false;
+      }
+      gapLog('resolveAncestorGap', nTag, `RECURSE up to <${parentTag}> depth ${depth}->${depth + 1}`, { depth });
+      if (!resolveAncestorGap(parent, depth + 1)) return false;
+      return serializeGapNode(parent);
+    };
     const pushAdd = (n: Node) => {
       const parent = dom.parentNode(n);
       if (!parent || !inDom(n)) {
@@ -304,9 +448,22 @@ export default class MutationBuffer {
         }
       }
 
-      const parentId = isShadowRoot(parent)
+      let parentId = isShadowRoot(parent)
         ? this.mirror.getId(getShadowHost(n))
         : this.mirror.getId(parent);
+
+      if (parentId === -1) {
+        const pushAddTag = (n as Element).tagName || n.nodeName;
+        gapLog('pushAdd', pushAddTag, 'parentId=-1, attempting gap resolution');
+        if (resolveAncestorGap(n)) {
+          parentId = isShadowRoot(parent)
+            ? this.mirror.getId(getShadowHost(n))
+            : this.mirror.getId(parent);
+          gapLog('pushAdd', pushAddTag, `gap resolved, new parentId=${parentId}`);
+        } else {
+          gapLog('pushAdd', pushAddTag, 'gap resolution FAILED, deferring to addList');
+        }
+      }
 
       const nextId = getNextId(n);
       if (parentId === -1 || nextId === -1) {
@@ -428,6 +585,15 @@ export default class MutationBuffer {
                   break;
                 }
               }
+              const retryTag = (unhandledNode as unknown as Element).tagName || unhandledNode.nodeName;
+              gapLog('addList', retryTag, 'retry: attempting gap resolution');
+              if (resolveAncestorGap(unhandledNode)) {
+                gapLog('addList', retryTag, 'retry: gap resolved');
+                node = _node;
+                break;
+              } else {
+                gapLog('addList', retryTag, 'retry: gap resolution FAILED');
+              }
             }
           }
         }
@@ -438,7 +604,11 @@ export default class MutationBuffer {
          * it may be a bug or corner case. We need to escape the
          * dead while loop at once.
          */
+        gapLog('addList', '-', `GIVING UP — ${addList.length} nodes unresolvable, dropping all`);
         while (addList.head) {
+          const droppedTag = (addList.head.value as unknown as Element).tagName || addList.head.value.nodeName;
+          const droppedClass = (addList.head.value as unknown as Element).className || '';
+          gapLog('addList', droppedTag, `DROPPED class="${droppedClass}"`);
           addList.removeNode(addList.head.value);
         }
         break;
