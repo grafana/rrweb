@@ -426,10 +426,12 @@ describe('record integration tests', function (this: ISuite) {
     );
     await waitForRAF(page);
 
-    const optionCount = 5_000;
+    const smallOptionCount = 1_000;
+    const largeOptionCount = 5_000;
     const result = await page.evaluate(
       async (
-        count,
+        smallCount,
+        largeCount,
         incrementalSnapshotType,
         mutationSource,
         elementNodeType,
@@ -438,64 +440,93 @@ describe('record integration tests', function (this: ISuite) {
           typeof globalThis & { snapshots: eventWithTime[] };
         const snapshots = (window as TestWindow).snapshots;
         const originalPush = snapshots.push.bind(snapshots);
-        let resolveMutation: (mutation: mutationData) => void;
-        const mutationRecorded = new Promise<mutationData>((resolve) => {
-          resolveMutation = resolve;
-        });
+        let resolveMutation: ((mutation: mutationData) => void) | null = null;
+        const nextMutation = () =>
+          new Promise<mutationData>((resolve) => {
+            resolveMutation = resolve;
+          });
         snapshots.push = (event) => {
           if (
             event.type === incrementalSnapshotType &&
             'source' in event.data &&
-            event.data.source === mutationSource
-          )
-            resolveMutation(event.data as mutationData);
+            event.data.source === mutationSource &&
+            resolveMutation
+          ) {
+            const resolve = resolveMutation;
+            resolveMutation = null;
+            resolve(event.data as mutationData);
+          }
           return originalPush(event);
         };
 
         const select = document.getElementById('select')!;
         const parent = select.parentNode!;
-        const start = performance.now();
-        parent.removeChild(select);
-        const fragment = document.createDocumentFragment();
-        const options: HTMLOptionElement[] = [];
-        for (let i = 0; i < count; i++) {
-          const option = document.createElement('option');
-          option.setAttribute('data-j', String(i));
-          option.textContent = String(i);
-          fragment.appendChild(option);
-          options.push(option);
-        }
-        select.appendChild(fragment);
-        parent.appendChild(select);
-        let seed = 0x12345678;
-        for (let i = options.length - 1; i > 0; i--) {
-          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-          const j = seed % (i + 1);
-          [options[i], options[j]] = [options[j], options[i]];
-        }
-        options.forEach((option) => select.appendChild(option));
-        const mutation = await mutationRecorded;
+        const run = async (count: number) => {
+          const mutationRecorded = nextMutation();
+          const start = performance.now();
+          parent.removeChild(select);
+          select.textContent = '';
+          const fragment = document.createDocumentFragment();
+          const options: HTMLOptionElement[] = [];
+          for (let i = 0; i < count; i++) {
+            const option = document.createElement('option');
+            option.setAttribute('data-j', String(i));
+            option.textContent = String(i);
+            fragment.appendChild(option);
+            options.push(option);
+          }
+          select.appendChild(fragment);
+          parent.appendChild(select);
+          let seed = 0x12345678;
+          for (let i = options.length - 1; i > 0; i--) {
+            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+            const j = seed % (i + 1);
+            [options[i], options[j]] = [options[j], options[i]];
+          }
+          options.forEach((option) => select.appendChild(option));
+          const mutation = await mutationRecorded;
+          return {
+            duration: performance.now() - start,
+            addCount: mutation.adds.length,
+            optionIndexes: mutation.adds.flatMap((add) =>
+              add.node.type === elementNodeType && add.node.tagName === 'option'
+                ? [Number(add.node.attributes['data-j'])]
+                : [],
+            ),
+            expectedOptionIndexes: Array.from(select.options)
+              .map((option) => Number(option.getAttribute('data-j')))
+              .reverse(),
+          };
+        };
+
+        await run(250);
+        const smallRuns = [await run(smallCount), await run(smallCount)];
+        const largeRuns = [await run(largeCount), await run(largeCount)];
         return {
-          duration: performance.now() - start,
-          addCount: mutation.adds.length,
-          optionIndexes: mutation.adds.flatMap((add) =>
-            add.node.type === elementNodeType && add.node.tagName === 'option'
-              ? [Number(add.node.attributes['data-j'])]
-              : [],
-          ),
+          smallDurations: smallRuns.map((run) => run.duration),
+          largeDurations: largeRuns.map((run) => run.duration),
+          largeResult: largeRuns[largeRuns.length - 1],
         };
       },
-      optionCount,
+      smallOptionCount,
+      largeOptionCount,
       EventType.IncrementalSnapshot,
       IncrementalSource.Mutation,
       NodeType.Element,
     );
 
-    expect(result.addCount).toBe(optionCount * 2 + 1);
-    expect(result.optionIndexes.sort((a, b) => a - b)).toEqual(
-      Array.from({ length: optionCount }, (_, i) => i),
+    expect(result.largeResult.addCount).toBe(largeOptionCount * 2 + 1);
+    expect(result.largeResult.optionIndexes).toEqual(
+      result.largeResult.expectedOptionIndexes,
     );
-    expect(result.duration).toBeLessThan(500);
+    expect([...result.largeResult.optionIndexes].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: largeOptionCount }, (_, i) => i),
+    );
+    const scalingRatio =
+      Math.min(...result.largeDurations) / Math.min(...result.smallDurations);
+    // A 5x input increase is near 5x for indexed processing, versus ~25x
+    // for the legacy quadratic scan. Leave margin for browser/CI noise.
+    expect(scalingRatio).toBeLessThan(12);
   });
 
   it('can record style changes compactly and preserve css var() functions', async () => {

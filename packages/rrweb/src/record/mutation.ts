@@ -501,8 +501,10 @@ export default class MutationBuffer {
       let node: DoubleLinkedListNode | null = null;
       // Preserve legacy order: prefer the previous candidate, then rightmost ready.
       if (candidate) {
-        const state = getState(candidate);
+        // pushAdd can defensively requeue a node with fresh list state.
+        const state = states.get(candidate);
         if (
+          state &&
           !state.removed &&
           state.unresolvedDependencies === 0 &&
           this.mirror.getId(dom.parentNode(candidate.value)) !== -1
