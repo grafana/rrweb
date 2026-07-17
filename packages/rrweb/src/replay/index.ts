@@ -156,6 +156,8 @@ export class Replayer {
   // Used to track video & audio elements, and keep them in sync with general playback.
   private mediaManager: MediaManager;
 
+  private destroyed = false;
+
   private firstFullSnapshot: eventWithTime | true | null = null;
 
   private newDocumentQueue: addedNodeMutation[] = [];
@@ -555,14 +557,39 @@ export class Replayer {
   /**
    * Totally destroy this replayer and please be careful that this operation is irreversible.
    * Memory occupation can be released by removing all references to this replayer.
+   * Safe to call multiple times.
    */
   public destroy() {
-    this.pause();
+    if (this.destroyed) return;
+    this.destroyed = true;
+
+    const errors: unknown[] = [];
+    try {
+      this.pause();
+    } catch (error) {
+      errors.push(error);
+    }
+
+    this.timer.clear();
+    this.mediaManager.reset();
+    this.service.stop();
+    this.speedService.stop();
     this.mirror.reset();
     this.styleMirror.reset();
-    this.mediaManager.reset();
+    this.imageMap.clear();
+    this.canvasEventMap.clear();
+    this.cache = createCache();
     this.config.root.removeChild(this.wrapper);
-    this.emitter.emit(ReplayerEvents.Destroy);
+
+    try {
+      this.emitter.emit(ReplayerEvents.Destroy);
+    } catch (error) {
+      errors.push(error);
+    } finally {
+      (this.emitter as Emitter & { all: Map<string, unknown> }).all.clear();
+    }
+
+    if (errors.length) throw errors[0];
   }
 
   public startLive(baselineTime?: number) {
