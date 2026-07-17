@@ -69,13 +69,21 @@ export function shouldUseCompactStyleDiff(
   }
 
   // Even when var() counts match, shorthand expansion may have produced
-  // empty longhand entries. If the style contains var() and the diff has
-  // empty or deleted non-custom properties, those likely came from
-  // shorthand expansion and would corrupt replay.
+  // empty longhand entries. If the style contains var() and either map has
+  // empty or deleted non-custom properties, those likely came from shorthand
+  // expansion and would corrupt replay.
   if (styleVarCount > 1) {
-    for (const [prop, val] of Object.entries(styleDiff)) {
-      if (prop.startsWith('--')) continue;
-      if (val === '' || val === false) return false;
+    for (const styles of [styleDiff, unchangedStyles]) {
+      for (const [prop, val] of Object.entries(styles)) {
+        if (prop.startsWith('--')) continue;
+        if (
+          val === false ||
+          val === '' ||
+          (Array.isArray(val) && val[0] === '')
+        ) {
+          return false;
+        }
+      }
     }
   }
 

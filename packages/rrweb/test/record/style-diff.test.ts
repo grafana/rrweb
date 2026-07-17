@@ -81,6 +81,63 @@ describe('shouldUseCompactStyleDiff', () => {
     ).toBe(false);
   });
 
+  it.each([
+    {
+      name: 'a deleted value in the style diff',
+      styleDiff: { 'padding-top': false },
+      unchangedStyles: {},
+    },
+    {
+      name: 'an empty scalar in the style diff',
+      styleDiff: { 'padding-top': '' },
+      unchangedStyles: {},
+    },
+    {
+      name: 'an empty tuple in the style diff',
+      styleDiff: { 'padding-top': ['', ''] },
+      unchangedStyles: {},
+    },
+    {
+      name: 'an empty important tuple in the style diff',
+      styleDiff: { 'padding-top': ['', 'important'] },
+      unchangedStyles: {},
+    },
+    {
+      name: 'a deleted value in unchanged styles',
+      styleDiff: {},
+      unchangedStyles: { 'padding-top': false },
+    },
+    {
+      name: 'an empty scalar in unchanged styles',
+      styleDiff: {},
+      unchangedStyles: { 'padding-top': '' },
+    },
+    {
+      name: 'an empty tuple in unchanged styles',
+      styleDiff: {},
+      unchangedStyles: { 'padding-top': ['', ''] },
+    },
+    {
+      name: 'an empty important tuple in unchanged styles',
+      styleDiff: {},
+      unchangedStyles: { 'padding-top': ['', 'important'] },
+    },
+  ])('falls back for $name when var() is involved', (unsafeValue) => {
+    const capturedVariables = {
+      color: 'var(--new)',
+      padding: 'var(--p)',
+      'padding-bottom': 'var(--pb)',
+    };
+
+    expect(
+      shouldUseCompactStyleDiff(
+        { ...capturedVariables, ...unsafeValue.styleDiff },
+        unsafeValue.unchangedStyles,
+        'color:var(--new);padding:var(--p);padding-bottom:var(--pb);display:block;position:relative;width:100px;height:100px;opacity:1',
+      ),
+    ).toBe(false);
+  });
+
   it('falls back when multiple shorthand var() expand to empty longhands', () => {
     expect(
       shouldUseCompactStyleDiff(
