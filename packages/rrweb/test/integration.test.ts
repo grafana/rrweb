@@ -571,7 +571,8 @@ describe('record integration tests', function (this: ISuite) {
             const { Replayer } = rrweb;
             const replayer = new Replayer(window.snapshots);
             try {
-              replayer.pause(1000);
+              const lastEvent = window.snapshots[window.snapshots.length - 1];
+              replayer.pause(lastEvent.timestamp - window.snapshots[0].timestamp + 1);
               const target = replayer.iframe.contentDocument.getElementById('css-var-target');
               if (!target) throw new Error('Replayed target was not found');
               const style = replayer.iframe.contentWindow.getComputedStyle(target);
