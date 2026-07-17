@@ -3,11 +3,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mirror } from '@grafana/rrweb-snapshot';
-import {
-  CanvasContext,
-  type canvasMutationWithType,
-  type IWindow,
-} from '@grafana/rrweb-types';
+import type { IWindow } from '@grafana/rrweb-types';
 import record from '../../src/record';
 import { mutationBuffers } from '../../src/record/observer';
 import { CanvasManager } from '../../src/record/observers/canvas/canvas-manager';
@@ -19,14 +15,6 @@ class TestCanvasRenderingContext2D {
     return;
   }
 }
-
-type CanvasManagerState = {
-  pendingCanvasMutations: Map<HTMLCanvasElement, canvasMutationWithType[]>;
-  processMutation: (
-    target: HTMLCanvasElement,
-    mutation: canvasMutationWithType,
-  ) => void;
-};
 
 describe('canvas recording cleanup', () => {
   let rafCallbacks: Map<number, FrameRequestCallback>;
@@ -43,10 +31,10 @@ describe('canvas recording cleanup', () => {
     });
   };
 
-  const createManager = () => {
+  const createManager = (mutationCb = vi.fn()) => {
     const manager = new CanvasManager({
       recordCanvas: true,
-      mutationCb: vi.fn(),
+      mutationCb,
       win: window as unknown as IWindow,
       blockClass: 'rr-block',
       blockSelector: null,
@@ -142,23 +130,25 @@ describe('canvas recording cleanup', () => {
 
     it('clears pending mutations and ignores a delayed 2D callback', async () => {
       vi.useFakeTimers();
-      const manager = createManager();
+      const mutationCb = vi.fn();
+      const manager = createManager(mutationCb);
       const canvas = document.createElement('canvas');
-      const state = manager as unknown as CanvasManagerState;
-      const mutation: canvasMutationWithType = {
-        type: CanvasContext['2D'],
-        property: 'fillRect',
-        args: [0, 0, 1, 1],
-      };
-      state.processMutation(canvas, mutation);
-      expect(state.pendingCanvasMutations.get(canvas)).toEqual([mutation]);
-
       const context = new TestCanvasRenderingContext2D(canvas);
+
+      context.fillRect(0, 0, 1, 1);
+      await vi.runAllTimersAsync();
+      manager.flushPendingCanvasMutationFor(canvas, 1);
+      expect(mutationCb).toHaveBeenCalledOnce();
+      mutationCb.mockClear();
+
+      context.fillRect(0, 0, 1, 1);
+      await vi.runAllTimersAsync();
       context.fillRect(0, 0, 1, 1);
       manager.reset();
       await vi.runAllTimersAsync();
+      manager.flushPendingCanvasMutationFor(canvas, 1);
 
-      expect(state.pendingCanvasMutations).toHaveLength(0);
+      expect(mutationCb).not.toHaveBeenCalled();
     });
   });
 
@@ -166,14 +156,17 @@ describe('canvas recording cleanup', () => {
     it.each([
       ['an initialized session', true],
       ['a recordDOM false session', false],
-    ] as const)('cancels both RAF loops for %s', (_name, recordDOM) => {
-      const stop = startRecording(recordDOM);
-      expect(rafCallbacks).toHaveLength(2);
-
-      stop();
-
-      expect(rafCallbacks).toHaveLength(0);
-    });
+    ] as const)(
+      'cancels both RAF loops for repeated %s',
+      (_name, recordDOM) => {
+        for (let cycle = 0; cycle < 2; cycle++) {
+          const stop = startRecording(recordDOM);
+          expect(rafCallbacks).toHaveLength(2);
+          stop();
+          expect(rafCallbacks).toHaveLength(0);
+        }
+      },
+    );
 
     it('cancels both RAF loops before delayed initialization', () => {
       setReadyState('loading');
@@ -183,15 +176,6 @@ describe('canvas recording cleanup', () => {
       stop();
 
       expect(rafCallbacks).toHaveLength(0);
-    });
-
-    it('cleans up repeated recording sessions', () => {
-      for (let cycle = 0; cycle < 2; cycle++) {
-        const stop = startRecording();
-        expect(rafCallbacks).toHaveLength(2);
-        stop();
-        expect(rafCallbacks).toHaveLength(0);
-      }
     });
   });
 });
