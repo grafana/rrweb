@@ -417,7 +417,9 @@ function record<T = eventWithTime>(
   };
 
   try {
-    const handlers: listenerHandler[] = [];
+    const handlers: listenerHandler[] = [
+      canvasManager.reset.bind(canvasManager),
+    ];
 
     const observe = (doc: Document) => {
       return callbackWrapper(initObservers)(
