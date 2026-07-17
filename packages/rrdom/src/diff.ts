@@ -137,6 +137,7 @@ function diffBeforeUpdatingChildren(
   }
   // If the Mirror data has some flaws, the diff function may throw errors. We check the node consistency here to make it robust.
   if (!sameNodeType(oldTree, newTree)) {
+    replayer.mirror.removeNodeFromMap(oldTree);
     const calibratedOldTree = createOrGetNode(
       newTree,
       replayer.mirror,
