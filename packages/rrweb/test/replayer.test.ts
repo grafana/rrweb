@@ -34,7 +34,10 @@ import styleDeclarationMissingRuleEvents from './events/style-declaration-missin
 import documentReplacementEvents from './events/document-replacement';
 import hoverInIframeShadowDom from './events/iframe-shadowdom-hover';
 import customElementDefineClass from './events/custom-element-define-class';
-import missingNextIdEvents from './events/missing-next-id';
+import missingNextIdEvents, {
+  cyclicNextIdEvents,
+  orderedNextIdEvents,
+} from './events/missing-next-id';
 import { ReplayerEvents } from '@grafana/rrweb-types';
 
 interface ISuite {
@@ -973,15 +976,60 @@ describe('replayer', function () {
           const span = iframe.contentDocument.querySelector('span');
           resolve({
             spanExists: !!span,
-            parentCorrect: span?.parentElement?.id !== undefined,
+            parentId: replayer.getMirror().getId(span?.parentElement),
           });
         }, 100);
       });
     `);
     expect(result).toEqual({
       spanExists: true,
-      parentCorrect: true,
+      parentId: 101,
     });
+  });
+
+  it('preserves sibling order when nextId is added in the same batch', async () => {
+    await page.evaluate(`events = ${JSON.stringify(orderedNextIdEvents)}`);
+    const childIds = await page.evaluate(`
+      const { Replayer } = rrweb;
+      const replayer = new Replayer(events);
+      replayer.play();
+      new Promise((resolve) => {
+        setTimeout(() => {
+          const parent = replayer.getMirror().getNode(101);
+          resolve(Array.from(parent.children, (child) => child.id));
+        }, 100);
+      });
+    `);
+
+    expect(childIds).toEqual(['a', 'b', 'c']);
+  });
+
+  it('stops resolving cyclic nextId dependencies after no progress', async () => {
+    await page.evaluate(`events = ${JSON.stringify(cyclicNextIdEvents)}`);
+    const result = await page.evaluate(`
+      const warnings = [];
+      const { Replayer } = rrweb;
+      const replayer = new Replayer(events, {
+        logger: {
+          log: () => {},
+          warn: (...args) => warnings.push(args),
+        },
+      });
+      replayer.play();
+      new Promise((resolve) => {
+        setTimeout(() => {
+          const parent = replayer.getMirror().getNode(101);
+          resolve({
+            childCount: parent.children.length,
+            noProgressWarning: warnings.some((args) => args.includes(
+              'Unable to resolve queued node mutations, please check the resolve tree data:'
+            )),
+          });
+        }, 100);
+      });
+    `);
+
+    expect(result).toEqual({ childCount: 0, noProgressWarning: true });
   });
 
   it('should destroy the replayer after calling destroy()', async () => {

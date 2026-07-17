@@ -1,8 +1,37 @@
-import { EventType, IncrementalSource } from '@grafana/rrweb-types';
-import type { eventWithTime } from '@grafana/rrweb-types';
+import { EventType, IncrementalSource, NodeType } from '@grafana/rrweb-types';
+import type {
+  addedNodeMutation,
+  eventWithTime,
+  serializedElementNodeWithId,
+} from '@grafana/rrweb-types';
 
 const now = Date.now();
-const events: eventWithTime[] = [
+
+const element = (
+  id: number,
+  attributes: Record<string, string> = {},
+): serializedElementNodeWithId => ({
+  id,
+  type: NodeType.Element,
+  tagName: 'span',
+  attributes,
+  childNodes: [],
+});
+
+const add = (
+  id: number,
+  nextId: number,
+  elementId: string,
+): addedNodeMutation => ({
+  parentId: 101,
+  nextId,
+  node: element(id, { id: elementId }),
+});
+
+const createEvents = (
+  adds: addedNodeMutation[],
+  childNodes: serializedElementNodeWithId[] = [],
+): eventWithTime[] => [
   {
     type: EventType.DomContentLoaded,
     data: {},
@@ -15,45 +44,48 @@ const events: eventWithTime[] = [
   },
   {
     type: EventType.Meta,
-    data: {
-      href: 'http://localhost',
-      width: 1000,
-      height: 800,
-    },
+    data: { href: 'http://localhost', width: 1000, height: 800 },
     timestamp: now + 10,
   },
   {
+    type: EventType.FullSnapshot,
     data: {
       node: {
         id: 1,
-        type: 0,
+        type: NodeType.Document,
         childNodes: [
-          { id: 2, name: 'html', type: 1, publicId: '', systemId: '' },
+          {
+            id: 2,
+            type: NodeType.DocumentType,
+            name: 'html',
+            publicId: '',
+            systemId: '',
+          },
           {
             id: 3,
-            type: 2,
+            type: NodeType.Element,
             tagName: 'html',
-            attributes: { lang: 'en' },
+            attributes: {},
             childNodes: [
               {
                 id: 4,
-                type: 2,
+                type: NodeType.Element,
                 tagName: 'head',
                 attributes: {},
                 childNodes: [],
               },
               {
                 id: 100,
-                type: 2,
+                type: NodeType.Element,
                 tagName: 'body',
                 attributes: {},
                 childNodes: [
                   {
                     id: 101,
-                    type: 2,
+                    type: NodeType.Element,
                     tagName: 'div',
                     attributes: {},
-                    childNodes: [],
+                    childNodes,
                   },
                 ],
               },
@@ -63,35 +95,31 @@ const events: eventWithTime[] = [
       },
       initialOffset: { top: 0, left: 0 },
     },
-    type: EventType.FullSnapshot,
     timestamp: now + 20,
   },
-  // Mutation that adds a node with a nextId that does not exist in the mirror.
-  // Before the fix this caused an infinite loop because the node was
-  // repeatedly re-queued waiting for the missing sibling.
   {
+    type: EventType.IncrementalSnapshot,
     data: {
-      adds: [
-        {
-          parentId: 101,
-          nextId: 999,
-          node: {
-            type: 2,
-            tagName: 'span',
-            attributes: {},
-            childNodes: [],
-            id: 200,
-          },
-        },
-      ],
-      texts: [],
       source: IncrementalSource.Mutation,
+      adds,
+      texts: [],
       removes: [],
       attributes: [],
     },
-    type: EventType.IncrementalSnapshot,
     timestamp: now + 30,
   },
 ];
 
-export default events;
+export const missingNextIdEvents = createEvents([add(200, 999, 'a')]);
+
+export const orderedNextIdEvents = createEvents(
+  [add(200, 201, 'a'), add(201, 203, 'b')],
+  [element(203, { id: 'c' })],
+);
+
+export const cyclicNextIdEvents = createEvents([
+  add(200, 201, 'a'),
+  add(201, 200, 'b'),
+]);
+
+export default missingNextIdEvents;
