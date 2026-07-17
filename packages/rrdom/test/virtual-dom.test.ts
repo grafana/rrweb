@@ -444,6 +444,14 @@ describe('RRDocument for browser environment', () => {
         dom.mirror.removeNodeFromMap(node1);
         expect(dom.mirror.has(0)).toBeFalsy();
         expect(dom.mirror.has(1)).toBeFalsy();
+
+        const replacement = dom.createElement('span');
+        dom.mirror.add(node1, getDefaultSN(node1, 0));
+        dom.mirror.add(node2, getDefaultSN(node2, 1));
+        dom.mirror.add(replacement, getDefaultSN(replacement, 0));
+        dom.mirror.removeNodeFromMap(node1);
+        expect(dom.mirror.getNode(0)).toBe(replacement);
+        expect(dom.mirror.has(1)).toBeFalsy();
       });
 
       it('can reset the mirror', () => {

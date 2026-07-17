@@ -218,7 +218,7 @@ export class Mirror implements IMirror<Node> {
   // doesn't remove the node from nodeMetaMap
   removeNodeFromMap(n: Node) {
     const id = this.getId(n);
-    this.idNodeMap.delete(id);
+    if (this.idNodeMap.get(id) === n) this.idNodeMap.delete(id);
 
     if (n.childNodes) {
       n.childNodes.forEach((childNode) =>

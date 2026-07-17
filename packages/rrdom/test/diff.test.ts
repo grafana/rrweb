@@ -301,7 +301,13 @@ describe('diff algorithm for rrdom', () => {
       let parentNode: Node = document.createElement('div');
       let unreliableNode: Node = document.createTextNode('');
       parentNode.appendChild(unreliableNode);
-      const rrNode = new RRDocument().createElement('li');
+      const rrDocument = new RRDocument();
+      const rrNode = rrDocument.createElement('li');
+      rrDocument.mirror.add(rrNode, {
+        ...elementSn,
+        tagName: 'LI',
+        id: 1,
+      });
       diff(unreliableNode, rrNode, replayer);
       expect(parentNode.childNodes.length).toEqual(1);
       expect(parentNode.childNodes[0]).toBeInstanceOf(HTMLElement);
@@ -310,13 +316,20 @@ describe('diff algorithm for rrdom', () => {
       // When the diff target has the same node type but with different tagName.
       parentNode = document.createElement('div');
       unreliableNode = document.createElement('span');
+      const staleChild = document.createElement('em');
+      unreliableNode.appendChild(staleChild);
       parentNode.appendChild(unreliableNode);
+      mirror.add(unreliableNode, { ...elementSn, tagName: 'SPAN', id: 1 });
+      mirror.add(staleChild, { ...elementSn, tagName: 'EM', id: 2 });
       diff(unreliableNode, rrNode, replayer);
-      expect((parentNode.childNodes[0] as HTMLElement).tagName).toEqual('LI');
+      const replacement = parentNode.childNodes[0] as HTMLElement;
+      expect(replacement.tagName).toEqual('LI');
+      expect(mirror.getNode(1)).toBe(replacement);
+      expect(mirror.getNode(2)).toBeNull();
 
       // When the diff target is a node without parentNode.
       unreliableNode = document.createComment('');
-      diff(unreliableNode, rrNode, replayer);
+      diff(unreliableNode, new RRDocument().createElement('li'), replayer);
     });
   });
 
@@ -1050,60 +1063,50 @@ describe('diff algorithm for rrdom', () => {
         {
           tagName: 'div',
           id: 0,
-          children: [],
+          children: [
+            {
+              tagName: 'span',
+              id: 1,
+              children: [{ tagName: 'em', id: 2 }],
+            },
+          ],
         },
         undefined,
         mirror,
       ) as Node;
-      // Construct unreliable Mirror data.
-      const unreliableChild = document.createTextNode('');
-      const unreliableSN = {
-        id: 1,
-        textContent: '',
-        type: RRNodeType.Text,
-      } as serializedNodeWithId;
-      mirror.add(unreliableChild, unreliableSN);
-      parentNode.appendChild(unreliableChild);
-      createTree(
-        {
-          tagName: 'div',
-          id: 2,
-          children: [],
-        },
-        undefined,
-        mirror,
-      );
+      const oldChild = parentNode.firstChild;
 
+      const rrDocument = new RRDocument();
       const rrParentNode = createTree(
         {
           tagName: 'div',
           id: 0,
-          children: [1].map((c) => ({
-            tagName: 'span',
-            id: c,
-            children: [2].map((c1) => ({
-              tagName: 'li',
-              id: c1,
-            })),
-          })),
+          children: [
+            {
+              tagName: 'div',
+              id: 1,
+              children: [{ tagName: 'strong', id: 3 }],
+            },
+          ],
         },
-        new RRDocument(),
+        rrDocument,
       ) as RRNode;
       const id = 'correctElement';
       (rrParentNode.childNodes[0] as IRRElement).setAttribute('id', id);
-      diff(parentNode, rrParentNode, replayer);
+      diff(parentNode, rrParentNode, replayer, rrDocument.mirror);
 
       expect(parentNode.childNodes.length).toEqual(1);
       expect(parentNode.childNodes[0]).toBeInstanceOf(HTMLElement);
 
-      const spanChild = parentNode.childNodes[0] as HTMLElement;
-      expect(spanChild.tagName).toEqual('SPAN');
-      expect(spanChild.id).toEqual(id);
-      expect(spanChild.childNodes.length).toEqual(1);
-      expect(spanChild.childNodes[0]).toBeInstanceOf(HTMLElement);
-
-      const liChild = spanChild.childNodes[0] as HTMLElement;
-      expect(liChild.tagName).toEqual('LI');
+      const replacement = parentNode.firstChild as HTMLElement;
+      expect(replacement.tagName).toEqual('DIV');
+      expect(replacement.id).toEqual(id);
+      expect(replacement.firstChild).toBeInstanceOf(HTMLElement);
+      expect((replacement.firstChild as HTMLElement).tagName).toEqual('STRONG');
+      expect(oldChild?.parentNode).toBeNull();
+      expect(mirror.getNode(1)).toBe(replacement);
+      expect(mirror.getNode(2)).toBeNull();
+      expect(mirror.getNode(3)).toBe(replacement.firstChild);
     });
 
     it('should handle corner case with children removed during diff process', () => {
