@@ -389,48 +389,128 @@ export default class MutationBuffer {
       }
     }
 
+    // Index readiness so fallback selection does not rescan the whole list.
+    type PendingNodeState = {
+      position: number;
+      unresolvedDependencies: number;
+      removed: boolean;
+    };
+    const states = new Map<DoubleLinkedListNode, PendingNodeState>();
+    const waiting = new Map<Node, DoubleLinkedListNode[]>();
+    const ready: DoubleLinkedListNode[] = [];
+    const getState = (node: DoubleLinkedListNode) => {
+      const state = states.get(node);
+      if (!state) throw new Error('Pending mutation node has no state');
+      return state;
+    };
+    const isHigherPriority = (
+      a: DoubleLinkedListNode,
+      b: DoubleLinkedListNode,
+    ) => getState(a).position > getState(b).position;
+    const pushReady = (node: DoubleLinkedListNode) => {
+      ready.push(node);
+      let index = ready.length - 1;
+      while (index > 0) {
+        const parent = Math.floor((index - 1) / 2);
+        if (!isHigherPriority(ready[index], ready[parent])) break;
+        [ready[index], ready[parent]] = [ready[parent], ready[index]];
+        index = parent;
+      }
+    };
+    const popReady = () => {
+      while (ready.length) {
+        const result = ready[0];
+        const last = ready.pop();
+        if (!last) return null;
+        if (ready.length) {
+          ready[0] = last;
+          let index = 0;
+          for (;;) {
+            const left = index * 2 + 1;
+            const right = left + 1;
+            let next = index;
+            if (
+              left < ready.length &&
+              isHigherPriority(ready[left], ready[next])
+            )
+              next = left;
+            if (
+              right < ready.length &&
+              isHigherPriority(ready[right], ready[next])
+            )
+              next = right;
+            if (next === index) break;
+            [ready[index], ready[next]] = [ready[next], ready[index]];
+            index = next;
+          }
+        }
+        const state = getState(result);
+        if (!state.removed && state.unresolvedDependencies === 0) return result;
+      }
+      return null;
+    };
+    const waitFor = (dependency: Node, node: DoubleLinkedListNode) => {
+      const dependents = waiting.get(dependency) || [];
+      dependents.push(node);
+      waiting.set(dependency, dependents);
+    };
+
+    let pendingNode = addList.head;
+    let position = 0;
+    while (pendingNode) {
+      const node = pendingNode;
+      const dependencies = new Set<Node>();
+      const parent = dom.parentNode(node.value);
+      const effectiveParent =
+        parent && parent.nodeType === Node.DOCUMENT_FRAGMENT_NODE
+          ? dom.host(parent as ShadowRoot)
+          : parent;
+      if (effectiveParent && this.mirror.getId(effectiveParent) === -1)
+        dependencies.add(effectiveParent);
+
+      let next = node.value.nextSibling;
+      while (next && this.mirror.getId(next) === IGNORED_NODE)
+        next = next.nextSibling;
+      if (next && this.mirror.getId(next) === -1) dependencies.add(next);
+
+      states.set(node, {
+        position: position++,
+        unresolvedDependencies: dependencies.size,
+        removed: false,
+      });
+      dependencies.forEach((dependency) => waitFor(dependency, node));
+      if (dependencies.size === 0) pushReady(node);
+      pendingNode = node.next;
+    }
+
+    const release = (dependency: Node) => {
+      if (this.mirror.getId(dependency) === -1) return;
+      const dependents = waiting.get(dependency);
+      if (!dependents) return;
+      waiting.delete(dependency);
+      dependents.forEach((dependent) => {
+        const state = getState(dependent);
+        if (state.removed) return;
+        state.unresolvedDependencies--;
+        if (state.unresolvedDependencies === 0) pushReady(dependent);
+      });
+    };
+
     let candidate: DoubleLinkedListNode | null = null;
     while (addList.length) {
       let node: DoubleLinkedListNode | null = null;
+      // Preserve legacy order: prefer the previous candidate, then rightmost ready.
       if (candidate) {
-        const parentId = this.mirror.getId(dom.parentNode(candidate.value));
-        const nextId = getNextId(candidate.value);
-        if (parentId !== -1 && nextId !== -1) {
+        const state = getState(candidate);
+        if (
+          !state.removed &&
+          state.unresolvedDependencies === 0 &&
+          this.mirror.getId(dom.parentNode(candidate.value)) !== -1
+        )
           node = candidate;
-        }
       }
       if (!node) {
-        let tailNode = addList.tail;
-        while (tailNode) {
-          const _node = tailNode;
-          tailNode = tailNode.previous;
-          // ensure _node is defined before attempting to find value
-          if (_node) {
-            const parentId = this.mirror.getId(dom.parentNode(_node.value));
-            const nextId = getNextId(_node.value);
-
-            if (nextId === -1) continue;
-            // nextId !== -1 && parentId !== -1
-            else if (parentId !== -1) {
-              node = _node;
-              break;
-            }
-            // nextId !== -1 && parentId === -1 This branch can happen if the node is the child of shadow root
-            else {
-              const unhandledNode = _node.value;
-              const parent = dom.parentNode(unhandledNode);
-              // If the node is the direct child of a shadow root, we treat the shadow host as its parent node.
-              if (parent && parent.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
-                const shadowHost = dom.host(parent as ShadowRoot);
-                const parentId = this.mirror.getId(shadowHost);
-                if (parentId !== -1) {
-                  node = _node;
-                  break;
-                }
-              }
-            }
-          }
-        }
+        node = popReady();
       }
       if (!node) {
         /**
@@ -445,7 +525,9 @@ export default class MutationBuffer {
       }
       candidate = node.previous;
       addList.removeNode(node.value);
+      getState(node).removed = true;
       pushAdd(node.value);
+      release(node.value);
     }
 
     const payload = {
