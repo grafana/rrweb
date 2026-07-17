@@ -105,6 +105,48 @@ describe('diff algorithm for rrdom', () => {
       expect(node.open).toBe(true);
     });
 
+    it('should not throw when matches() rejects the :modal selector', () => {
+      const tagName = 'DIALOG';
+      const node = document.createElement(tagName) as HTMLDialogElement;
+      vi.spyOn(node, 'matches').mockImplementation(() => {
+        throw new DOMException('Unsupported selector');
+      });
+      const showModalFn = vi.spyOn(node, 'showModal');
+
+      const rrDocument = new RRDocument();
+      const rrNode = rrDocument.createElement(tagName);
+      rrNode.attributes = { rr_open_mode: 'modal', open: '' };
+
+      mirror.add(node, elementSn);
+      rrDocument.mirror.add(rrNode, elementSn);
+
+      expect(() => diff(node, rrNode, replayer)).not.toThrow();
+      expect(showModalFn).toBeCalled();
+      expect(node.getAttribute('rr_open_mode')).toBe('modal');
+    });
+
+    it('should rely on attributes when dialog methods are unavailable', () => {
+      const tagName = 'DIALOG';
+      const node = document.createElement(tagName) as HTMLDialogElement;
+      vi.spyOn(node, 'matches').mockReturnValue(false);
+      Object.defineProperties(node, {
+        close: { value: undefined },
+        show: { value: undefined },
+        showModal: { value: undefined },
+      });
+
+      const rrDocument = new RRDocument();
+      const rrNode = rrDocument.createElement(tagName);
+      rrNode.attributes = { rr_open_mode: 'modal', open: '' };
+
+      mirror.add(node, elementSn);
+      rrDocument.mirror.add(rrNode, elementSn);
+
+      expect(() => diff(node, rrNode, replayer)).not.toThrow();
+      expect(node.getAttribute('open')).toBe('');
+      expect(node.getAttribute('rr_open_mode')).toBe('modal');
+    });
+
     it('should not trigger `close` on rr_open_mode is kept', () => {
       const tagName = 'DIALOG';
       const node = document.createElement(tagName) as HTMLDialogElement;
