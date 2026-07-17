@@ -33,21 +33,6 @@ const createEvents = (
   childNodes: serializedElementNodeWithId[] = [],
 ): eventWithTime[] => [
   {
-    type: EventType.DomContentLoaded,
-    data: {},
-    timestamp: now,
-  },
-  {
-    type: EventType.Load,
-    data: {},
-    timestamp: now + 10,
-  },
-  {
-    type: EventType.Meta,
-    data: { href: 'http://localhost', width: 1000, height: 800 },
-    timestamp: now + 10,
-  },
-  {
     type: EventType.FullSnapshot,
     data: {
       node: {
@@ -95,7 +80,7 @@ const createEvents = (
       },
       initialOffset: { top: 0, left: 0 },
     },
-    timestamp: now + 20,
+    timestamp: now,
   },
   {
     type: EventType.IncrementalSnapshot,
@@ -106,7 +91,7 @@ const createEvents = (
       removes: [],
       attributes: [],
     },
-    timestamp: now + 30,
+    timestamp: now + 10,
   },
 ];
 
