@@ -977,6 +977,83 @@ describe('replayer', function () {
     expect(wrapper).toBeNull();
   });
 
+  it.each([
+    [[], null, false],
+    [[ReplayerEvents.Pause], 'pause-listener', false],
+    [[ReplayerEvents.Destroy], 'destroy-listener', false],
+    [[ReplayerEvents.Pause, ReplayerEvents.Destroy], 'pause-listener', false],
+    [[], null, true],
+  ] as const)(
+    'finishes cleanup when %j handlers throw (expected: %s, wrapper detached: %s)',
+    async (throwEvents, expectedError, detachWrapper) => {
+      const result = await page.evaluate(`
+        const { Replayer } = rrweb;
+        const replayer = new Replayer([], { liveMode: true });
+        replayer.timer.start();
+        replayer['imageMap'].set('seed', document.createElement('img'));
+        replayer['canvasEventMap'].set({}, {});
+        replayer['cache'].stylesWithHoverClass.set('seed', 'seed');
+        let destroyCount = 0;
+        let connectedAtDestroy = null;
+        replayer.on('${ReplayerEvents.Destroy}', () => {
+          destroyCount++;
+          connectedAtDestroy = replayer.wrapper.isConnected;
+        });
+        for (const event of ${JSON.stringify(throwEvents)}) {
+          replayer.on(event, () => {
+            throw new Error(event + '-listener');
+          });
+        }
+        const seeded =
+          replayer.service.status === 1 &&
+          replayer.speedService.status === 1 &&
+          replayer.timer.isActive() &&
+          replayer['emitter'].all.size > 1 &&
+          replayer.wrapper.isConnected &&
+          replayer['imageMap'].size === 1 &&
+          replayer['canvasEventMap'].size === 1 &&
+          replayer['cache'].stylesWithHoverClass.size === 1;
+        if (${detachWrapper}) replayer.wrapper.remove();
+
+        let firstThrown = null;
+        let secondThrown = null;
+        try { replayer.destroy(); } catch (error) { firstThrown = error.message; }
+        try { replayer.destroy(); } catch (error) { secondThrown = error.message; }
+        const after = {
+          firstThrown,
+          secondThrown,
+          destroyCount,
+          connectedAtDestroy,
+          serviceStatuses: [replayer.service.status, replayer.speedService.status],
+          timerActive: replayer.timer.isActive(),
+          emitterGroups: replayer['emitter'].all.size,
+          wrapperConnected: replayer.wrapper.isConnected,
+          mapSizes: [replayer['imageMap'].size, replayer['canvasEventMap'].size],
+          cacheSize: replayer['cache'].stylesWithHoverClass.size,
+        };
+        replayer.timer.clear();
+        replayer.wrapper.remove();
+        ({ seeded, after });
+      `);
+
+      expect(result).toEqual({
+        seeded: true,
+        after: {
+          firstThrown: expectedError,
+          secondThrown: null,
+          destroyCount: 1,
+          connectedAtDestroy: false,
+          serviceStatuses: [2, 2],
+          timerActive: false,
+          emitterGroups: 0,
+          wrapperConnected: false,
+          mapSizes: [0, 0],
+          cacheSize: 0,
+        },
+      });
+    },
+  );
+
   it('can replay adopted stylesheet events', async () => {
     await page.evaluate(`
       events = ${JSON.stringify(adoptedStyleSheet)};
