@@ -978,13 +978,14 @@ describe('replayer', function () {
   });
 
   it.each([
-    [[], null],
-    [[ReplayerEvents.Pause], 'pause-listener'],
-    [[ReplayerEvents.Destroy], 'destroy-listener'],
-    [[ReplayerEvents.Pause, ReplayerEvents.Destroy], 'pause-listener'],
+    [[], null, false],
+    [[ReplayerEvents.Pause], 'pause-listener', false],
+    [[ReplayerEvents.Destroy], 'destroy-listener', false],
+    [[ReplayerEvents.Pause, ReplayerEvents.Destroy], 'pause-listener', false],
+    [[], null, true],
   ] as const)(
-    'finishes cleanup when %j handlers throw',
-    async (throwEvents, expectedError) => {
+    'finishes cleanup when %j handlers throw (expected: %s, wrapper detached: %s)',
+    async (throwEvents, expectedError, detachWrapper) => {
       const result = await page.evaluate(`
         const { Replayer } = rrweb;
         const replayer = new Replayer([], { liveMode: true });
@@ -1012,6 +1013,7 @@ describe('replayer', function () {
           replayer['imageMap'].size === 1 &&
           replayer['canvasEventMap'].size === 1 &&
           replayer['cache'].stylesWithHoverClass.size === 1;
+        if (${detachWrapper}) replayer.wrapper.remove();
 
         let firstThrown = null;
         let secondThrown = null;

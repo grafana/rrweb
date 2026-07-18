@@ -579,7 +579,7 @@ export class Replayer {
     this.imageMap.clear();
     this.canvasEventMap.clear();
     this.cache = createCache();
-    this.config.root.removeChild(this.wrapper);
+    this.wrapper.parentNode?.removeChild(this.wrapper);
 
     try {
       this.emitter.emit(ReplayerEvents.Destroy);
