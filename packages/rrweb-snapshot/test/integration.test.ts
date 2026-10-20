@@ -279,6 +279,15 @@ iframe.contentDocument.querySelector('center').clientHeight
       );
 
       await page.waitForSelector('img', { timeout: 1000 });
+      const liveImageBefore = await page.evaluate(() => {
+        const image = document.querySelector('img')!;
+        return {
+          crossOrigin: image.crossOrigin,
+          src: image.src,
+          naturalWidth: image.naturalWidth,
+          complete: image.complete,
+        };
+      });
       await page.evaluate(`${code}window.snapshot = rrwebSnapshot.snapshot(document, {
         dataURLOptions: { type: "image/webp", quality: 0.8 },
         inlineImages: true,
@@ -288,6 +297,16 @@ iframe.contentDocument.querySelector('center').clientHeight
         () => JSON.stringify((window as any).snapshot).includes('rr_dataURL'),
         { timeout: 2000 },
       );
+      const liveImageAfter = await page.evaluate(() => {
+        const image = document.querySelector('img')!;
+        return {
+          crossOrigin: image.crossOrigin,
+          src: image.src,
+          naturalWidth: image.naturalWidth,
+          complete: image.complete,
+        };
+      });
+      expect(liveImageAfter).toEqual(liveImageBefore);
       const bodyChildren = (await page.evaluate(`
       snapshot.childNodes[0].childNodes[1].childNodes.filter((cn) => cn.type === 2);
 `)) as any[];
