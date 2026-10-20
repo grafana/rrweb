@@ -709,6 +709,10 @@ function serializeElementNode(
         const imageForInlining = doc.createElement('img');
         imageForInlining.crossOrigin = image.crossOrigin || 'anonymous';
         const skipInlineImage = () => {
+          imageForInlining.removeEventListener(
+            'load',
+            recordInlineImageFromClone,
+          );
           imageForInlining.removeEventListener('error', skipInlineImage);
         };
         const recordInlineImageFromClone = () => {

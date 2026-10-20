@@ -332,10 +332,11 @@ iframe.contentDocument.querySelector('center').clientHeight
 
     try {
       await page.goto(serverURL, { waitUntil: 'load' });
+      const imageURL = `${getServerURL(
+        imageServer,
+      )}/images/rrweb-favicon-20x20.png`;
       await page.setContent(`
-        <img src="${getServerURL(
-          imageServer,
-        )}/images/rrweb-favicon-20x20.png" />
+        <img src="${imageURL}" />
       `);
       await page.waitForSelector('img', { timeout: 1000 });
       await page.waitForFunction(
@@ -344,7 +345,25 @@ iframe.contentDocument.querySelector('center').clientHeight
 
       const before = await page.evaluate(() => {
         const image = document.querySelector('img')!;
-        return { src: image.src, naturalWidth: image.naturalWidth };
+        return {
+          crossOrigin: image.crossOrigin,
+          src: image.src,
+          naturalWidth: image.naturalWidth,
+        };
+      });
+      const failedImageRequest = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          page.off('requestfailed', onRequestFailed);
+          reject(new Error('Timed out waiting for the CORS image request'));
+        }, 2000);
+        const onRequestFailed = (request: puppeteer.HTTPRequest) => {
+          if (request.url() === imageURL) {
+            clearTimeout(timeout);
+            page.off('requestfailed', onRequestFailed);
+            resolve();
+          }
+        };
+        page.on('requestfailed', onRequestFailed);
       });
       await page.evaluate(`${code}
         window.loaderMutations = [];
@@ -355,11 +374,12 @@ iframe.contentDocument.querySelector('center').clientHeight
         inlineImages: true,
         inlineStylesheet: false,
       });`);
-      await waitForRAF(page);
+      await failedImageRequest;
 
       const after = await page.evaluate(() => {
         const image = document.querySelector('img')!;
         return {
+          crossOrigin: image.crossOrigin,
           src: image.src,
           naturalWidth: image.naturalWidth,
           complete: image.complete,
