@@ -34,8 +34,20 @@ export class CanvasManager {
   private resetObservers?: listenerHandler;
   private frozen = false;
   private locked = false;
+  private stopped = false;
+  private flushRafId: number | null = null;
+  private timestampRafId: number | null = null;
 
   public reset() {
+    this.stopped = true;
+    if (this.flushRafId !== null) {
+      cancelAnimationFrame(this.flushRafId);
+      this.flushRafId = null;
+    }
+    if (this.timestampRafId !== null) {
+      cancelAnimationFrame(this.timestampRafId);
+      this.timestampRafId = null;
+    }
     this.pendingCanvasMutations.clear();
     this.resetObservers && this.resetObservers();
   }
@@ -89,6 +101,7 @@ export class CanvasManager {
     target,
     mutation,
   ) => {
+    if (this.stopped) return;
     const newFrame =
       this.rafStamps.invokeId &&
       this.rafStamps.latestId !== this.rafStamps.invokeId;
@@ -273,15 +286,18 @@ export class CanvasManager {
   }
 
   private startPendingCanvasMutationFlusher() {
-    requestAnimationFrame(() => this.flushPendingCanvasMutations());
+    this.flushRafId = requestAnimationFrame(() =>
+      this.flushPendingCanvasMutations(),
+    );
   }
 
   private startRAFTimestamping() {
     const setLatestRAFTimestamp = (timestamp: DOMHighResTimeStamp) => {
       this.rafStamps.latestId = timestamp;
-      requestAnimationFrame(setLatestRAFTimestamp);
+      if (this.stopped) return;
+      this.timestampRafId = requestAnimationFrame(setLatestRAFTimestamp);
     };
-    requestAnimationFrame(setLatestRAFTimestamp);
+    this.timestampRafId = requestAnimationFrame(setLatestRAFTimestamp);
   }
 
   flushPendingCanvasMutations() {
@@ -291,7 +307,10 @@ export class CanvasManager {
         this.flushPendingCanvasMutationFor(canvas, id);
       },
     );
-    requestAnimationFrame(() => this.flushPendingCanvasMutations());
+    if (this.stopped) return;
+    this.flushRafId = requestAnimationFrame(() =>
+      this.flushPendingCanvasMutations(),
+    );
   }
 
   flushPendingCanvasMutationFor(canvas: HTMLCanvasElement, id: number) {
