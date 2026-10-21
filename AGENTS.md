@@ -682,3 +682,4 @@ Changes that require an update to this file include:
 If you are an AI agent and you notice this file is out of date with respect
 to the current state of the repository, flag it to the user and propose the
 specific updates needed.
+- Security issues should be reported via [Grafana's security issue reporting page](https://grafana.com/legal/report-a-security-issue/) and not directly in this repository.
