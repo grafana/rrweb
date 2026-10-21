@@ -708,6 +708,7 @@ function serializeElementNode(
       } catch (err) {
         const imageForInlining = doc.createElement('img');
         imageForInlining.crossOrigin = image.crossOrigin || 'anonymous';
+        imageForInlining.referrerPolicy = image.referrerPolicy;
         const skipInlineImage = () => {
           imageForInlining.removeEventListener(
             'load',

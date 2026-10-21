@@ -29,7 +29,11 @@ interface IMimeType {
   [key: string]: string;
 }
 
-const startServer = (defaultPort: number = 3030, allowCors = true) =>
+const startServer = (
+  defaultPort: number = 3030,
+  allowCors = true,
+  rejectReferer = false,
+) =>
   new Promise<http.Server>((resolve) => {
     const mimeType: IMimeType = {
       '.html': 'text/html',
@@ -37,8 +41,21 @@ const startServer = (defaultPort: number = 3030, allowCors = true) =>
       '.css': 'text/css',
       '.png': 'image/png',
     };
+    let imageRequestCount = 0;
     const s = http.createServer((req, res) => {
       const parsedUrl = url.parse(req.url!);
+      const isImageRequest = parsedUrl.pathname?.startsWith('/images/');
+      if (isImageRequest) imageRequestCount += 1;
+      if (
+        rejectReferer &&
+        isImageRequest &&
+        imageRequestCount > 1 &&
+        req.headers.referer
+      ) {
+        res.statusCode = 403;
+        res.end();
+        return;
+      }
       const sanitizePath = path
         .normalize(parsedUrl.pathname!)
         .replace(/^(\.\.[\/\\])+/, '');
@@ -261,7 +278,7 @@ iframe.contentDocument.querySelector('center').clientHeight
   });
 
   it('correctly saves cross-origin images offline', async () => {
-    const imageServer = await startServer(3032);
+    const imageServer = await startServer(3032, true, true);
     const page: puppeteer.Page = await browser.newPage();
     try {
       await page.goto(serverURL, { waitUntil: 'load' });
@@ -271,7 +288,7 @@ iframe.contentDocument.querySelector('center').clientHeight
   <body>
     <img src="${getServerURL(
       imageServer,
-    )}/images/rrweb-favicon-20x20.png" alt="CORS restricted but has access-control-allow-origin: *" />
+    )}/images/rrweb-favicon-20x20.png" referrerpolicy="no-referrer" alt="CORS restricted but has access-control-allow-origin: *" />
   </body>
 </html>
 `,
@@ -283,6 +300,7 @@ iframe.contentDocument.querySelector('center').clientHeight
         const image = document.querySelector('img')!;
         return {
           crossOrigin: image.crossOrigin,
+          referrerPolicy: image.referrerPolicy,
           src: image.src,
           naturalWidth: image.naturalWidth,
           complete: image.complete,
@@ -301,6 +319,7 @@ iframe.contentDocument.querySelector('center').clientHeight
         const image = document.querySelector('img')!;
         return {
           crossOrigin: image.crossOrigin,
+          referrerPolicy: image.referrerPolicy,
           src: image.src,
           naturalWidth: image.naturalWidth,
           complete: image.complete,
@@ -315,6 +334,7 @@ iframe.contentDocument.querySelector('center').clientHeight
           tagName: 'img',
           attributes: {
             src: getServerURL(imageServer) + '/images/rrweb-favicon-20x20.png',
+            referrerpolicy: 'no-referrer',
             alt: 'CORS restricted but has access-control-allow-origin: *',
             rr_dataURL: expect.stringMatching(/^data:image\/webp;base64,/),
           },
