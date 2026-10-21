@@ -287,8 +287,21 @@ function diffAfterUpdatingChildren(
         case 'DIALOG': {
           const dialog = oldElement as HTMLDialogElement;
           const rrDialog = newRRElement as unknown as RRDialogElement;
+          const canControlDialog =
+            typeof dialog.close === 'function' &&
+            typeof dialog.show === 'function' &&
+            typeof dialog.showModal === 'function';
+          if (!canControlDialog) break;
+
           const wasOpen = dialog.open;
-          const wasModal = dialog.matches('dialog:modal');
+          let wasModal = false;
+          try {
+            wasModal =
+              typeof dialog.matches === 'function' &&
+              dialog.matches('dialog:modal');
+          } catch {
+            // Some DOM implementations do not support the :modal selector.
+          }
           const shouldBeOpen = rrDialog.open;
           const shouldBeModal = rrDialog.isModal;
 
