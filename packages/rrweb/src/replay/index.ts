@@ -1485,24 +1485,8 @@ export class Replayer {
       ...this.legacy_missingNodeRetryMap,
     };
     const queue: addedNodeMutation[] = [];
-
-    // next not present at this moment
-    const nextNotInDOM = (mutation: addedNodeMutation) => {
-      let next: TNode | null = null;
-      if (mutation.nextId) {
-        next = mirror.getNode(mutation.nextId) as TNode | null;
-      }
-      // next not present at this moment
-      if (
-        mutation.nextId !== null &&
-        mutation.nextId !== undefined &&
-        mutation.nextId !== -1 &&
-        !next
-      ) {
-        return true;
-      }
-      return false;
-    };
+    const addIds = new Set(d.adds.map((add) => add.node.id));
+    let appendedNodeCount = 0;
 
     const appendNode = (mutation: addedNodeMutation) => {
       if (!this.iframe.contentDocument) {
@@ -1516,7 +1500,7 @@ export class Replayer {
           // is newly added document, maybe the document node of an iframe
           return this.newDocumentQueue.push(mutation);
         }
-        return queue.push(mutation);
+        return addIds.has(mutation.parentId) ? queue.push(mutation) : undefined;
       }
 
       if (mutation.node.isShadow) {
@@ -1535,7 +1519,13 @@ export class Replayer {
       if (mutation.nextId) {
         next = mirror.getNode(mutation.nextId);
       }
-      if (nextNotInDOM(mutation)) {
+      if (
+        mutation.nextId !== null &&
+        mutation.nextId !== undefined &&
+        mutation.nextId !== -1 &&
+        !next &&
+        addIds.has(mutation.nextId)
+      ) {
         return queue.push(mutation);
       }
 
@@ -1673,6 +1663,7 @@ export class Replayer {
       /**
        * target was added, execute plugin hooks
        */
+      appendedNodeCount++;
       afterAppend(target, mutation.node.id);
 
       /**
@@ -1729,6 +1720,7 @@ export class Replayer {
         );
         break;
       }
+      const appendedNodeCountBeforePass = appendedNodeCount;
       for (const tree of resolveTrees) {
         const parent = mirror.getNode(tree.value.parentId);
         if (!parent) {
@@ -1741,6 +1733,13 @@ export class Replayer {
             appendNode(mutation);
           });
         }
+      }
+      if (queue.length && appendedNodeCount === appendedNodeCountBeforePass) {
+        this.warn(
+          'Unable to resolve queued node mutations, please check the resolve tree data:',
+          resolveTrees,
+        );
+        break;
       }
     }
 
