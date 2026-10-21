@@ -14,7 +14,12 @@ import {
   ISuite,
 } from './utils';
 import type { recordOptions } from '../src/types';
-import { eventWithTime, NodeType, EventType } from '@grafana/rrweb-types';
+import {
+  eventWithTime,
+  NodeType,
+  EventType,
+  IncrementalSource,
+} from '@grafana/rrweb-types';
 import { visitSnapshot } from '@grafana/rrweb-snapshot';
 
 describe('record integration tests', function (this: ISuite) {
@@ -464,6 +469,127 @@ describe('record integration tests', function (this: ISuite) {
     )) as eventWithTime[];
     await assertSnapshot(snapshots);
   });
+
+  it.each([
+    { label: 'ordinary declarations', important: false },
+    { label: '!important declarations', important: true },
+  ])(
+    'preserves padding from synchronous CSS var() mutations with $label',
+    async ({ important }) => {
+      const page: puppeteer.Page = await browser.newPage();
+
+      try {
+        await page.goto('about:blank');
+        await page.setContent(getHtml.call(this, 'blank.html'), {
+          waitUntil: 'networkidle0',
+        });
+
+        await page.evaluate(() => {
+          const target = document.createElement('div');
+          target.id = 'css-var-target';
+          target.setAttribute(
+            'style',
+            '--old:red;--new:blue;--p:10px;--pb:20px;color:var(--old);display:block;position:relative;width:100px;height:100px;min-width:1px;max-width:200px;opacity:1',
+          );
+          document.body.appendChild(target);
+        });
+        await waitForRAF(page);
+
+        await page.evaluate((useImportant) => {
+          type TestWindow = Window &
+            typeof globalThis & {
+              styleMutationObserver: MutationObserver;
+              styleMutationRecordCount: number;
+            };
+          const testWindow = window as TestWindow;
+          const target = document.getElementById('css-var-target')!;
+          testWindow.styleMutationRecordCount = 0;
+          testWindow.styleMutationObserver = new MutationObserver((records) => {
+            testWindow.styleMutationRecordCount += records.length;
+          });
+          testWindow.styleMutationObserver.observe(target, {
+            attributes: true,
+            attributeFilter: ['style'],
+            attributeOldValue: true,
+          });
+
+          target.style.color = 'var(--new)';
+          const priority = useImportant ? ' !important' : '';
+          target.setAttribute(
+            'style',
+            `${target.getAttribute(
+              'style',
+            )};padding:var(--p)${priority};padding-bottom:var(--pb)${priority}`,
+          );
+        }, important);
+        await waitForRAF(page);
+
+        const mutationRecordCount = await page.evaluate(() => {
+          const testWindow = window as typeof window & {
+            styleMutationObserver: MutationObserver;
+            styleMutationRecordCount: number;
+          };
+          testWindow.styleMutationObserver.disconnect();
+          return testWindow.styleMutationRecordCount;
+        });
+        expect(mutationRecordCount).toBe(2);
+
+        const snapshots = (await page.evaluate(
+          'window.snapshots',
+        )) as eventWithTime[];
+        const recordedStyles = snapshots.flatMap((event) => {
+          if (
+            event.type !== EventType.IncrementalSnapshot ||
+            event.data.source !== IncrementalSource.Mutation
+          ) {
+            return [];
+          }
+          return event.data.attributes.flatMap(({ attributes }) =>
+            Object.prototype.hasOwnProperty.call(attributes, 'style')
+              ? [attributes.style]
+              : [],
+          );
+        });
+
+        expect(recordedStyles).toHaveLength(1);
+        const recordedStyle = recordedStyles[0];
+        expect(recordedStyle).toEqual(expect.any(String));
+        if (typeof recordedStyle !== 'string') {
+          throw new Error('Expected the safe full style string fallback');
+        }
+        expect(recordedStyle).toMatch(/padding:\s*var\(--p\)/);
+        expect(recordedStyle).toMatch(/padding-bottom:\s*var\(--pb\)/);
+        if (important) {
+          expect(recordedStyle).toMatch(/padding:\s*var\(--p\)\s*!important/);
+          expect(recordedStyle).toMatch(
+            /padding-bottom:\s*var\(--pb\)\s*!important/,
+          );
+        }
+
+        const replayedPadding = (await page.evaluate(`
+          (() => {
+            const { Replayer } = rrweb;
+            const replayer = new Replayer(window.snapshots);
+            try {
+              const lastEvent = window.snapshots[window.snapshots.length - 1];
+              replayer.pause(lastEvent.timestamp - window.snapshots[0].timestamp + 1);
+              const target = replayer.iframe.contentDocument.getElementById('css-var-target');
+              if (!target) throw new Error('Replayed target was not found');
+              const style = replayer.iframe.contentWindow.getComputedStyle(target);
+              return [style.paddingTop, style.paddingBottom];
+            } finally {
+              replayer.destroy();
+            }
+          })();
+        `)) as [string, string];
+        expect(replayedPadding).toEqual(['10px', '20px']);
+      } finally {
+        if (!page.isClosed()) {
+          await page.close();
+        }
+      }
+    },
+  );
 
   it('can freeze mutations', async () => {
     const page: puppeteer.Page = await browser.newPage();
