@@ -29,7 +29,11 @@ interface IMimeType {
   [key: string]: string;
 }
 
-const startServer = (defaultPort: number = 3030) =>
+const startServer = (
+  defaultPort: number = 3030,
+  allowCors = true,
+  rejectReferer = false,
+) =>
   new Promise<http.Server>((resolve) => {
     const mimeType: IMimeType = {
       '.html': 'text/html',
@@ -37,8 +41,21 @@ const startServer = (defaultPort: number = 3030) =>
       '.css': 'text/css',
       '.png': 'image/png',
     };
+    let imageRequestCount = 0;
     const s = http.createServer((req, res) => {
       const parsedUrl = url.parse(req.url!);
+      const isImageRequest = parsedUrl.pathname?.startsWith('/images/');
+      if (isImageRequest) imageRequestCount += 1;
+      if (
+        rejectReferer &&
+        isImageRequest &&
+        imageRequestCount > 1 &&
+        req.headers.referer
+      ) {
+        res.statusCode = 403;
+        res.end();
+        return;
+      }
       const sanitizePath = path
         .normalize(parsedUrl.pathname!)
         .replace(/^(\.\.[\/\\])+/, '');
@@ -47,9 +64,11 @@ const startServer = (defaultPort: number = 3030) =>
         const data = fs.readFileSync(pathname);
         const ext = path.parse(pathname).ext;
         res.setHeader('Content-type', mimeType[ext] || 'text/plain');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'GET');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-type');
+        if (allowCors) {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET');
+          res.setHeader('Access-Control-Allow-Headers', 'Content-type');
+        }
         res.end(data);
       } catch (error) {
         res.end();
@@ -259,45 +278,154 @@ iframe.contentDocument.querySelector('center').clientHeight
   });
 
   it('correctly saves cross-origin images offline', async () => {
+    const imageServer = await startServer(3032, true, true);
     const page: puppeteer.Page = await browser.newPage();
-    await page.goto('about:blank', {
-      waitUntil: 'load',
-    });
-    await page.setContent(
-      `
+    try {
+      await page.goto(serverURL, { waitUntil: 'load' });
+      await page.setContent(
+        `
 <html xmlns="http://www.w3.org/1999/xhtml">
   <body>
     <img src="${getServerURL(
-      server,
-    )}/images/rrweb-favicon-20x20.png" alt="CORS restricted but has access-control-allow-origin: *" />
+      imageServer,
+    )}/images/rrweb-favicon-20x20.png" referrerpolicy="no-referrer" alt="CORS restricted but has access-control-allow-origin: *" />
   </body>
 </html>
 `,
-      {
-        waitUntil: 'load',
-      },
-    );
+        { waitUntil: 'load' },
+      );
 
-    await page.waitForSelector('img', { timeout: 1000 });
-    await page.evaluate(`${code}var snapshot = rrwebSnapshot.snapshot(document, {
+      await page.waitForSelector('img', { timeout: 1000 });
+      const liveImageBefore = await page.evaluate(() => {
+        const image = document.querySelector('img')!;
+        return {
+          crossOrigin: image.crossOrigin,
+          referrerPolicy: image.referrerPolicy,
+          src: image.src,
+          naturalWidth: image.naturalWidth,
+          complete: image.complete,
+        };
+      });
+      await page.evaluate(`${code}window.snapshot = rrwebSnapshot.snapshot(document, {
         dataURLOptions: { type: "image/webp", quality: 0.8 },
         inlineImages: true,
         inlineStylesheet: false
     })`);
-    await waitForRAF(page); // need a small wait, as after the crossOrigin="anonymous" change, the snapshot triggers a reload of the image (after which, the snapshot is mutated)
-    const bodyChildren = (await page.evaluate(`
+      await page.waitForFunction(
+        () => JSON.stringify((window as any).snapshot).includes('rr_dataURL'),
+        { timeout: 2000 },
+      );
+      const liveImageAfter = await page.evaluate(() => {
+        const image = document.querySelector('img')!;
+        return {
+          crossOrigin: image.crossOrigin,
+          referrerPolicy: image.referrerPolicy,
+          src: image.src,
+          naturalWidth: image.naturalWidth,
+          complete: image.complete,
+        };
+      });
+      expect(liveImageAfter).toEqual(liveImageBefore);
+      const bodyChildren = (await page.evaluate(`
       snapshot.childNodes[0].childNodes[1].childNodes.filter((cn) => cn.type === 2);
 `)) as any[];
-    expect(bodyChildren[0]).toEqual(
-      expect.objectContaining({
-        tagName: 'img',
-        attributes: {
-          src: getServerURL(server) + '/images/rrweb-favicon-20x20.png',
-          alt: 'CORS restricted but has access-control-allow-origin: *',
-          rr_dataURL: expect.stringMatching(/^data:image\/webp;base64,/),
-        },
-      }),
-    );
+      expect(bodyChildren[0]).toEqual(
+        expect.objectContaining({
+          tagName: 'img',
+          attributes: {
+            src: getServerURL(imageServer) + '/images/rrweb-favicon-20x20.png',
+            referrerpolicy: 'no-referrer',
+            alt: 'CORS restricted but has access-control-allow-origin: *',
+            rr_dataURL: expect.stringMatching(/^data:image\/webp;base64,/),
+          },
+        }),
+      );
+    } finally {
+      await page.close();
+      await imageServer.close();
+    }
+  });
+
+  it('does not break a loaded image when cross-origin inlining fails', async () => {
+    const imageServer = await startServer(3031, false);
+    const page: puppeteer.Page = await browser.newPage();
+
+    try {
+      await page.goto(serverURL, { waitUntil: 'load' });
+      const imageURL = `${getServerURL(
+        imageServer,
+      )}/images/rrweb-favicon-20x20.png`;
+      await page.setContent(`
+        <img src="${imageURL}" />
+      `);
+      await page.waitForSelector('img', { timeout: 1000 });
+      await page.waitForFunction(
+        () => document.querySelector('img')?.naturalWidth !== 0,
+      );
+
+      const before = await page.evaluate(() => {
+        const image = document.querySelector('img')!;
+        return {
+          crossOrigin: image.crossOrigin,
+          src: image.src,
+          naturalWidth: image.naturalWidth,
+        };
+      });
+      const failedImageRequest = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          page.off('requestfailed', onRequestFailed);
+          reject(new Error('Timed out waiting for the CORS image request'));
+        }, 2000);
+        const onRequestFailed = (request: puppeteer.HTTPRequest) => {
+          if (request.url() === imageURL) {
+            clearTimeout(timeout);
+            page.off('requestfailed', onRequestFailed);
+            resolve();
+          }
+        };
+        page.on('requestfailed', onRequestFailed);
+      });
+      await page.evaluate(`${code}
+        window.loaderMutations = [];
+        new MutationObserver((mutations) => {
+          window.loaderMutations.push(...mutations);
+        }).observe(document, { childList: true, subtree: true });
+        window.snapshot = rrwebSnapshot.snapshot(document, {
+        inlineImages: true,
+        inlineStylesheet: false,
+      });`);
+      await failedImageRequest;
+
+      const after = await page.evaluate(() => {
+        const image = document.querySelector('img')!;
+        return {
+          crossOrigin: image.crossOrigin,
+          src: image.src,
+          naturalWidth: image.naturalWidth,
+          complete: image.complete,
+          loaderMutations: (window as any).loaderMutations.flatMap(
+            (mutation: any) =>
+              [...mutation.addedNodes, ...mutation.removedNodes]
+                .map((node: any) => node.tagName)
+                .filter((tagName: string) => tagName === 'IMG'),
+          ),
+          rrDataURL: (
+            window as any
+          ).snapshot.childNodes[0].childNodes[1].childNodes.find(
+            (node: any) => node.tagName === 'img',
+          )?.attributes.rr_dataURL,
+        };
+      });
+      expect(after).toEqual({
+        ...before,
+        complete: true,
+        loaderMutations: [],
+        rrDataURL: undefined,
+      });
+    } finally {
+      await page.close();
+      await imageServer.close();
+    }
   });
 
   it('correctly saves blob:images offline', async () => {

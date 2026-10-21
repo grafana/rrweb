@@ -695,7 +695,6 @@ function serializeElementNode(
     const image = n as HTMLImageElement;
     const imageSrc: string =
       image.currentSrc || image.getAttribute('src') || '<unknown-src>';
-    const priorCrossOrigin = image.crossOrigin;
     const recordInlineImage = () => {
       image.removeEventListener('load', recordInlineImage);
       try {
@@ -707,22 +706,45 @@ function serializeElementNode(
           dataURLOptions.quality,
         );
       } catch (err) {
-        if (image.crossOrigin !== 'anonymous') {
-          image.crossOrigin = 'anonymous';
-          if (image.complete && image.naturalWidth !== 0)
-            recordInlineImage(); // too early due to image reload
-          else image.addEventListener('load', recordInlineImage);
-          return;
-        } else {
-          console.warn(
-            `Cannot inline img src=${imageSrc}! Error: ${err as string}`,
+        const imageForInlining = doc.createElement('img');
+        imageForInlining.crossOrigin = image.crossOrigin || 'anonymous';
+        imageForInlining.referrerPolicy = image.referrerPolicy;
+        const skipInlineImage = () => {
+          imageForInlining.removeEventListener(
+            'load',
+            recordInlineImageFromClone,
           );
+          imageForInlining.removeEventListener('error', skipInlineImage);
+        };
+        const recordInlineImageFromClone = () => {
+          imageForInlining.removeEventListener(
+            'load',
+            recordInlineImageFromClone,
+          );
+          imageForInlining.removeEventListener('error', skipInlineImage);
+          try {
+            canvasService!.width = imageForInlining.naturalWidth;
+            canvasService!.height = imageForInlining.naturalHeight;
+            canvasCtx!.drawImage(imageForInlining, 0, 0);
+            attributes.rr_dataURL = canvasService!.toDataURL(
+              dataURLOptions.type,
+              dataURLOptions.quality,
+            );
+          } catch (cloneError) {
+            console.warn(
+              `Cannot inline img src=${imageSrc}! Error: ${
+                cloneError as string
+              }`,
+            );
+          }
+        };
+        imageForInlining.addEventListener('load', recordInlineImageFromClone);
+        imageForInlining.addEventListener('error', skipInlineImage);
+        // Assign src only after crossOrigin so the loader never taints the canvas.
+        imageForInlining.src = imageSrc;
+        if (imageForInlining.complete && imageForInlining.naturalWidth !== 0) {
+          recordInlineImageFromClone();
         }
-      }
-      if (image.crossOrigin === 'anonymous') {
-        priorCrossOrigin
-          ? (attributes.crossOrigin = priorCrossOrigin)
-          : image.removeAttribute('crossorigin');
       }
     };
     // The image content may not have finished loading yet.
