@@ -615,6 +615,7 @@ function record<T = eventWithTime>(
         }
       });
       processedNodeManager.destroy();
+      mutationBuffers.length = 0;
       recording = false;
       unregisterErrorHandler();
     };
