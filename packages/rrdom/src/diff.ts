@@ -337,12 +337,14 @@ function diffProps(
   const oldAttributes = oldTree.attributes;
   const newAttributes = newTree.attributes;
 
+  const sn = rrnodeMirror.getMeta(newTree) as elementNode | null;
   for (const name in newAttributes) {
     const newValue = newAttributes[name];
-    const sn = rrnodeMirror.getMeta(newTree) as elementNode | null;
-    if (sn?.isSVG && NAMESPACES[name])
-      oldTree.setAttributeNS(NAMESPACES[name], name, newValue);
-    else if (newTree.tagName === 'CANVAS' && name === 'rr_dataURL') {
+    if (sn?.isSVG && NAMESPACES[name]) {
+      const localName = name.includes(':') ? name.split(':')[1] : name;
+      if (oldTree.getAttributeNS(NAMESPACES[name], localName) !== newValue)
+        oldTree.setAttributeNS(NAMESPACES[name], name, newValue);
+    } else if (newTree.tagName === 'CANVAS' && name === 'rr_dataURL') {
       const image = document.createElement('img');
       image.src = newValue;
       image.onload = () => {
@@ -352,7 +354,7 @@ function diffProps(
         }
       };
     } else if (newTree.tagName === 'IFRAME' && name === 'srcdoc') continue;
-    else {
+    else if (oldTree.getAttribute(name) !== newValue) {
       try {
         oldTree.setAttribute(name, newValue);
       } catch (err) {

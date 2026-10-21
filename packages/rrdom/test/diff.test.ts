@@ -2,6 +2,7 @@
  * @jest-environment jsdom
  */
 import * as fs from 'fs';
+import * as http from 'http';
 import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import { vi, MockInstance } from 'vitest';
@@ -338,6 +339,29 @@ describe('diff algorithm for rrdom', () => {
       expect((node as Node as HTMLElement).className).toBe('node');
     });
 
+    it('only sets generic attributes when their values change', () => {
+      const tagName = 'DIV';
+      const node = document.createElement(tagName);
+      node.setAttribute('title', 'unchanged');
+
+      const rrDocument = new RRDocument();
+      const rrNode = rrDocument.createElement(tagName);
+      const sn = Object.assign({}, elementSn, { tagName });
+      rrDocument.mirror.add(rrNode, sn);
+      rrNode.attributes.title = 'unchanged';
+
+      const setAttribute = vi.spyOn(node, 'setAttribute');
+      diff(node, rrNode, replayer);
+      expect(setAttribute).not.toHaveBeenCalled();
+
+      rrNode.attributes.title = 'changed';
+      diff(node, rrNode, replayer);
+      expect(setAttribute).toHaveBeenCalledTimes(1);
+      expect(setAttribute).toHaveBeenCalledWith('title', 'changed');
+      expect(node.getAttribute('title')).toBe('changed');
+      setAttribute.mockRestore();
+    });
+
     it('ignores invalid attributes', () => {
       const tagName = 'DIV';
       const node = document.createElement(tagName);
@@ -459,6 +483,37 @@ describe('diff algorithm for rrdom', () => {
         value,
       );
       vi.restoreAllMocks();
+    });
+
+    it('only sets namespaced attributes when their values change', () => {
+      const svgNamespace = 'http://www.w3.org/2000/svg';
+      const xlinkNamespace = 'http://www.w3.org/1999/xlink';
+      const element = document.createElementNS(svgNamespace, 'svg');
+      element.setAttributeNS(xlinkNamespace, 'xlink:href', '#unchanged');
+
+      const rrDocument = new RRDocument();
+      const node = rrDocument.createElement('svg');
+      const sn = Object.assign({}, elementSn, {
+        tagName: 'svg',
+        isSVG: true,
+      });
+      rrDocument.mirror.add(node, sn);
+      node.attributes['xlink:href'] = '#unchanged';
+
+      const setAttributeNS = vi.spyOn(element, 'setAttributeNS');
+      diff(element, node, replayer);
+      expect(setAttributeNS).not.toHaveBeenCalled();
+
+      node.attributes['xlink:href'] = '#changed';
+      diff(element, node, replayer);
+      expect(setAttributeNS).toHaveBeenCalledTimes(1);
+      expect(setAttributeNS).toHaveBeenCalledWith(
+        xlinkNamespace,
+        'xlink:href',
+        '#changed',
+      );
+      expect(element.getAttributeNS(xlinkNamespace, 'href')).toBe('#changed');
+      setAttributeNS.mockRestore();
     });
 
     it('can diff properties for canvas', async () => {
@@ -1496,6 +1551,88 @@ describe('diff algorithm for rrdom', () => {
       } finally {
         await page.close();
         await browser.close();
+      }
+    });
+
+    it('does not reload an iframe when its src is unchanged', async () => {
+      const listen = (server: http.Server) =>
+        new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const close = (server: http.Server) => {
+        if (!server.listening) return Promise.resolve();
+        return new Promise<void>((resolve) => server.close(() => resolve()));
+      };
+
+      let frameRequests = 0;
+      const frameServer = http.createServer((request, response) => {
+        if (request.url === '/frame') frameRequests++;
+        response.setHeader('Cache-Control', 'no-store');
+        response.end('<!DOCTYPE html><title>frame</title>');
+      });
+      let frameSrc = '';
+      const rootServer = http.createServer((_request, response) => {
+        response.end(`<!DOCTYPE html><iframe src="${frameSrc}"></iframe>`);
+      });
+      let browser: puppeteer.Browser | null = null;
+      try {
+        await listen(frameServer);
+        const frameAddress = frameServer.address();
+        if (!frameAddress || typeof frameAddress === 'string')
+          throw new Error('Unable to start iframe test server');
+        frameSrc = `http://127.0.0.1:${frameAddress.port}/frame`;
+
+        await listen(rootServer);
+        const rootAddress = rootServer.address();
+        if (!rootAddress || typeof rootAddress === 'string')
+          throw new Error('Unable to start root test server');
+
+        browser = await puppeteer.launch({
+          args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        });
+        const page = await browser.newPage();
+        await page.goto(`http://127.0.0.1:${rootAddress.port}/`, {
+          waitUntil: 'networkidle0',
+        });
+        const code = fs.readFileSync(
+          path.resolve(__dirname, '../dist/rrdom.umd.cjs'),
+          'utf8',
+        );
+        await page.evaluate(code);
+
+        expect(frameRequests).toBe(1);
+        expect(
+          await page.evaluate(
+            () => document.querySelector('iframe')?.contentDocument,
+          ),
+        ).toBeNull();
+
+        await page.evaluate((src) => {
+          const iframe = document.querySelector('iframe')!;
+          const rrdom = (
+            window as unknown as { rrdom: typeof import('../src') }
+          ).rrdom;
+          const rrDocument = new rrdom.RRDocument();
+          const rrIframe = rrDocument.createElement('iframe');
+          rrDocument.mirror.add(rrIframe, rrdom.getDefaultSN(rrIframe, 1));
+          rrIframe.attributes.src = src;
+          const replayer = {
+            mirror: rrdom.createMirror(),
+            applyCanvas: () => {},
+            applyInput: () => {},
+            applyScroll: () => {},
+            applyStyleSheetMutation: () => {},
+          };
+
+          rrdom.diff(iframe, rrIframe, replayer);
+        }, frameSrc);
+        await page.waitForNetworkIdle({ idleTime: 100 });
+
+        expect(frameRequests).toBe(1);
+      } finally {
+        await Promise.all([
+          browser?.close(),
+          close(rootServer),
+          close(frameServer),
+        ]);
       }
     });
   });
