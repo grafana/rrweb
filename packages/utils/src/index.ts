@@ -37,22 +37,57 @@ const untaintedBaseIframeCleanup: Partial<
   Record<keyof BasePrototypeCache, () => void>
 > = {};
 
+type WindowWithZone = typeof globalThis & {
+  Zone?: {
+    __symbol__?: (key: string) => string;
+  };
+};
+
+type WindowWithUnpatchedSymbols = typeof globalThis &
+  Record<string, TypeofPrototypeOwner | undefined>;
+
+function isConstructor(candidate: unknown): candidate is TypeofPrototypeOwner {
+  if (
+    typeof candidate !== 'function' ||
+    typeof candidate.prototype !== 'object' ||
+    candidate.prototype === null
+  ) {
+    return false;
+  }
+
+  try {
+    Reflect.construct(Object, [], candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /*
- When angular patches things - particularly the MutationObserver -
- they pass the `isNativeFunction` check
- That then causes performance issues
- because Angular's change detection
- doesn't like sharing a mutation observer
- Checking for the presence of the Zone object
- on global is a good-enough proxy for Angular
- to cover most cases
- (you can configure zone.js to have a different name
-  on the global object and should then manually run rrweb
-  outside the Zone)
+ * Zone.js stores the originals it patches under names derived from Zone.__symbol__.
+ * Angular's patched MutationObserver can pass native-code checks but still cause
+ * change-detection overhead, so use only a validated original when one is exposed.
+ * See https://github.com/angular/angular/issues/26948.
  */
 export const isAngularZonePresent = (): boolean => {
   return !!(globalThis as { Zone?: unknown }).Zone;
 };
+
+// If Zone has no discoverable original, keep its patched APIs off this path.
+function getAngularUnpatchedConstructor(
+  key: keyof BasePrototypeCache,
+): TypeofPrototypeOwner | undefined {
+  try {
+    const zone = (globalThis as WindowWithZone).Zone;
+    const symbol = zone?.__symbol__?.(key);
+    const candidate = symbol
+      ? (globalThis as WindowWithUnpatchedSymbols)[symbol]
+      : undefined;
+    return isConstructor(candidate) ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 export function getUntaintedPrototype<T extends keyof BasePrototypeCache>(
   key: T,
@@ -60,8 +95,11 @@ export function getUntaintedPrototype<T extends keyof BasePrototypeCache>(
   if (untaintedBasePrototype[key])
     return untaintedBasePrototype[key] as BasePrototypeCache[T];
 
-  const defaultObj = globalThis[key] as TypeofPrototypeOwner;
+  const angularUnpatchedObject = getAngularUnpatchedConstructor(key);
+  const pageObject = globalThis[key] as TypeofPrototypeOwner;
+  const defaultObj = angularUnpatchedObject || pageObject;
   const defaultPrototype = defaultObj.prototype as BasePrototypeCache[T];
+  const pagePrototype = pageObject.prototype as BasePrototypeCache[T];
 
   // use list of testable accessors to check if the prototype is tainted
   const accessorNames =
@@ -89,7 +127,11 @@ export function getUntaintedPrototype<T extends keyof BasePrototypeCache>(
       ),
   );
 
-  if (isUntaintedAccessors && isUntaintedMethods && !isAngularZonePresent()) {
+  if (
+    isUntaintedAccessors &&
+    isUntaintedMethods &&
+    (!isAngularZonePresent() || angularUnpatchedObject)
+  ) {
     untaintedBasePrototype[key] = defaultObj.prototype as BasePrototypeCache[T];
     return defaultObj.prototype as BasePrototypeCache[T];
   }
@@ -99,7 +141,7 @@ export function getUntaintedPrototype<T extends keyof BasePrototypeCache>(
     iframeEl.style.display = 'none';
     document.body.appendChild(iframeEl);
     const win = iframeEl.contentWindow;
-    if (!win) return defaultObj.prototype as BasePrototypeCache[T];
+    if (!win) return pagePrototype;
 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
     const untaintedObject = (win as any)[key]
@@ -107,7 +149,7 @@ export function getUntaintedPrototype<T extends keyof BasePrototypeCache>(
 
     if (!untaintedObject) {
       iframeEl.remove();
-      return defaultPrototype;
+      return pagePrototype;
     }
 
     // WebKit/Safari: WebKit tears down an iframe's ScriptExecutionContext when it is
@@ -126,7 +168,7 @@ export function getUntaintedPrototype<T extends keyof BasePrototypeCache>(
 
     return (untaintedBasePrototype[key] = untaintedObject);
   } catch {
-    return defaultPrototype;
+    return pagePrototype;
   }
 }
 
