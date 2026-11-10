@@ -8,8 +8,11 @@ import type {
   eventWithoutTime,
   serializedNodeWithId,
   mutationCallBack,
+  listenerHandler,
+  IWindow,
 } from '@grafana/rrweb-types';
 import type { StylesheetManager } from './stylesheet-manager';
+import { on } from '../utils';
 
 export class IframeManager {
   private iframes: WeakMap<HTMLIFrameElement, true> = new WeakMap();
@@ -23,7 +26,13 @@ export class IframeManager {
   private mutationCb: mutationCallBack;
   private wrappedEmit: (e: eventWithoutTime, isCheckout?: boolean) => void;
   private loadListener?: (iframeEl: HTMLIFrameElement) => unknown;
-  private pageHideListener?: (iframeEl: HTMLIFrameElement) => unknown;
+  private unloadListener?: (doc: Document) => unknown;
+  private attachedWindows: Map<
+    Window,
+    { stop: listenerHandler; doc: Document }
+  > = new Map();
+  private messageHandler = (message: Event) =>
+    this.handleMessage(message as MessageEvent);
   private stylesheetManager: StylesheetManager;
   private recordCrossOriginIframes: boolean;
 
@@ -45,7 +54,7 @@ export class IframeManager {
     );
     this.mirror = options.mirror;
     if (this.recordCrossOriginIframes) {
-      window.addEventListener('message', this.handleMessage.bind(this));
+      window.addEventListener('message', this.messageHandler);
     }
   }
 
@@ -59,8 +68,8 @@ export class IframeManager {
     this.loadListener = cb;
   }
 
-  public addPageHideListener(cb: (iframeEl: HTMLIFrameElement) => unknown) {
-    this.pageHideListener = cb;
+  public addUnloadListener(cb: (doc: Document) => unknown) {
+    this.unloadListener = cb;
   }
 
   public attachIframe(
@@ -81,18 +90,8 @@ export class IframeManager {
       isAttachIframe: true,
     });
 
-    // Receive messages (events) coming from cross-origin iframes that are nested in this same-origin iframe.
-    if (this.recordCrossOriginIframes)
-      iframeEl.contentWindow?.addEventListener(
-        'message',
-        this.handleMessage.bind(this),
-      );
-
     // contentWindow is a stable WindowProxy across navigation; keep its routing entry.
-    iframeEl.contentWindow?.addEventListener('pagehide', () => {
-      this.pageHideListener?.(iframeEl);
-      this.mirror.removeNodeFromMap(iframeEl.contentDocument!);
-    });
+    this.watchIframeWindow(iframeEl);
 
     this.loadListener?.(iframeEl);
 
@@ -106,6 +105,63 @@ export class IframeManager {
         this.mirror.getId(iframeEl.contentDocument),
       );
   }
+
+  public destroy() {
+    window.removeEventListener('message', this.messageHandler);
+    this.attachedWindows.forEach(({ stop }) => stop());
+  }
+
+  private watchIframeWindow(iframeEl: HTMLIFrameElement) {
+    const win = iframeEl.contentWindow as IWindow | null;
+    const doc = iframeEl.contentDocument;
+    if (!win || !doc) return;
+
+    const attached = this.attachedWindows.get(win);
+    if (attached) {
+      if (attached.doc !== doc) {
+        attached.stop();
+        this.unloadIframeDocument(attached.doc);
+      } else {
+        return;
+      }
+    }
+
+    const handlers: listenerHandler[] = [];
+    const stop = () => {
+      if (this.attachedWindows.get(win)?.stop === stop) {
+        this.attachedWindows.delete(win);
+      }
+      handlers.forEach((handler) => {
+        try {
+          handler();
+        } catch {
+          // The iframe may have navigated to a cross-origin page by now.
+        }
+      });
+    };
+    this.attachedWindows.set(win, { stop, doc });
+
+    if (this.recordCrossOriginIframes) {
+      handlers.push(on('message', this.messageHandler, win));
+    }
+    handlers.push(
+      on(
+        'pagehide',
+        (event) => {
+          if ((event as PageTransitionEvent).persisted) return;
+          stop();
+          this.unloadIframeDocument(doc);
+        },
+        win,
+      ),
+    );
+  }
+
+  private unloadIframeDocument(doc: Document) {
+    this.unloadListener?.(doc);
+    this.mirror.removeNodeFromMap(doc);
+  }
+
   private handleMessage(message: MessageEvent | CrossOriginIframeMessageEvent) {
     const crossOriginMessageEvent = message as CrossOriginIframeMessageEvent;
     if (

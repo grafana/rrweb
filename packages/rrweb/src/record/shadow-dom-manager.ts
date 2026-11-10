@@ -1,16 +1,16 @@
 import type { MutationBufferParam } from '../types';
 import type {
+  listenerHandler,
   mutationCallBack,
   scrollCallback,
   SamplingStrategy,
 } from '@grafana/rrweb-types';
 import {
   initMutationObserver,
-  removeMutationBuffer,
   initScrollObserver,
   initAdoptedStyleSheetObserver,
 } from './observer';
-import { inDom, hasShadowRoot } from '../utils';
+import { inDom } from '../utils';
 import type { Mirror } from '@grafana/rrweb-snapshot';
 import { isNativeShadowDom } from '@grafana/rrweb-snapshot';
 import dom, { patch } from '@grafana/rrweb-utils';
@@ -26,6 +26,7 @@ export class ShadowDomManager {
   private shadowDoms = new WeakSet<ShadowRoot>();
   /** Per-root teardowns, so one detached root can be released alone. */
   private shadowRootTeardowns = new Map<ShadowRoot, (() => void)[]>();
+  private iframeRestoreHandlers = new Map<Document, listenerHandler>();
   private mutationCb: mutationCallBack;
   private scrollCb: scrollCallback;
   private bypassOptions: BypassOptions;
@@ -58,7 +59,7 @@ export class ShadowDomManager {
     this.shadowDoms.add(shadowRoot);
     const teardowns: (() => void)[] = [];
     this.shadowRootTeardowns.set(shadowRoot, teardowns);
-    const [observer] = initMutationObserver(
+    const stopMutationObserver = initMutationObserver(
       {
         ...this.bypassOptions,
         doc,
@@ -68,7 +69,7 @@ export class ShadowDomManager {
       },
       shadowRoot,
     );
-    teardowns.push(() => removeMutationBuffer(observer));
+    teardowns.push(stopMutationObserver);
     teardowns.push(
       initScrollObserver({
         ...this.bypassOptions,
@@ -122,16 +123,34 @@ export class ShadowDomManager {
     this.shadowDoms.delete(shadowRoot);
   }
 
-  public removeShadowRootsFor(node: Node) {
-    if (hasShadowRoot(node)) {
-      const shadowRoot = node.shadowRoot;
-      // Attached at emit time means moved or reinserted: keep observing.
-      if (this.shadowDoms.has(shadowRoot) && !inDom(node)) {
+  /**
+   * Releases every observed shadow root below a document that is unloading.
+   * Its children can still appear in-DOM while pagehide runs, so callers
+   * should not use the attachment check used for removed mutation nodes.
+   */
+  public removeShadowRootsIn(node: Node) {
+    const iframeRestoreHandler = this.iframeRestoreHandlers.get(
+      node as Document,
+    );
+    if (iframeRestoreHandler) {
+      this.iframeRestoreHandlers.delete(node as Document);
+      const index = this.restoreHandlers.indexOf(iframeRestoreHandler);
+      if (index !== -1) this.restoreHandlers.splice(index, 1);
+      try {
+        iframeRestoreHandler();
+      } catch {
+        // The iframe may have navigated while its prototype was being restored.
+      }
+    }
+
+    const shadowRoot = dom.shadowRoot(node);
+    if (shadowRoot) {
+      if (this.shadowDoms.has(shadowRoot)) {
         this.removeShadowRoot(shadowRoot);
       }
-      this.removeShadowRootsFor(shadowRoot);
+      this.removeShadowRootsIn(shadowRoot);
     }
-    node.childNodes?.forEach((child) => this.removeShadowRootsFor(child));
+    dom.childNodes(node).forEach((child) => this.removeShadowRootsIn(child));
   }
 
   /**
@@ -139,15 +158,18 @@ export class ShadowDomManager {
    */
   public observeAttachShadow(iframeElement: HTMLIFrameElement) {
     if (!iframeElement.contentWindow || !iframeElement.contentDocument) return;
+    const doc = iframeElement.contentDocument;
+    if (this.iframeRestoreHandlers.has(doc)) return;
 
-    this.patchAttachShadow(
+    const restore = this.patchAttachShadow(
       (
         iframeElement.contentWindow as Window & {
           Element: { prototype: Element };
         }
       ).Element,
-      iframeElement.contentDocument,
+      doc,
     );
+    this.iframeRestoreHandlers.set(doc, restore);
   }
 
   /**
@@ -158,27 +180,27 @@ export class ShadowDomManager {
       prototype: Element;
     },
     doc: Document,
-  ) {
+  ): listenerHandler {
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const manager = this;
-    this.restoreHandlers.push(
-      patch(
-        element.prototype,
-        'attachShadow',
-        function (original: (init: ShadowRootInit) => ShadowRoot) {
-          return function (this: Element, option: ShadowRootInit) {
-            const sRoot = original.call(this, option);
-            // For the shadow dom elements in the document, monitor their dom mutations.
-            // For shadow dom elements that aren't in the document yet,
-            // we start monitoring them once their shadow dom host is appended to the document.
-            const shadowRootEl = dom.shadowRoot(this);
-            if (shadowRootEl && inDom(this))
-              manager.addShadowRoot(shadowRootEl, doc);
-            return sRoot;
-          };
-        },
-      ),
+    const restore = patch(
+      element.prototype,
+      'attachShadow',
+      function (original: (init: ShadowRootInit) => ShadowRoot) {
+        return function (this: Element, option: ShadowRootInit) {
+          const sRoot = original.call(this, option);
+          // For the shadow dom elements in the document, monitor their dom mutations.
+          // For shadow dom elements that aren't in the document yet,
+          // we start monitoring them once their shadow dom host is appended to the document.
+          const shadowRootEl = dom.shadowRoot(this);
+          if (shadowRootEl && inDom(this))
+            manager.addShadowRoot(shadowRootEl, doc);
+          return sRoot;
+        };
+      },
     );
+    this.restoreHandlers.push(restore);
+    return restore;
   }
 
   public reset() {
@@ -190,6 +212,7 @@ export class ShadowDomManager {
       }
     });
     this.restoreHandlers = [];
+    this.iframeRestoreHandlers.clear();
     this.shadowRootTeardowns.forEach((teardowns) => {
       teardowns.forEach((teardown) => {
         try {
