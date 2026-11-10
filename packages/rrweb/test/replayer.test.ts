@@ -1423,6 +1423,40 @@ describe('replayer', function () {
     expect(errorThrown).not.toHaveBeenCalled();
   });
 
+  it('routes virtual DOM diff errors through the configured warning handler', async () => {
+    const warnings = await page.evaluate(async (eventData: string) => {
+      const warnings: unknown[][] = [];
+      const { Replayer } = (window as IWindow).rrweb;
+      const replayer = new Replayer(JSON.parse(eventData), {
+        logger: {
+          log: () => {},
+          warn: (...args) => warnings.push(args),
+        },
+        plugins: [
+          {
+            onBuild(node, { id }) {
+              // The fixture adds ids 6-9; defaultView distinguishes the live
+              // iframe nodes built by the flush diff from RRDOM nodes.
+              if (id >= 6 && (node as Node).ownerDocument?.defaultView) {
+                throw new Error('plugin build failed');
+              }
+            },
+          },
+        ],
+      });
+
+      replayer.play(500);
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => resolve()),
+      );
+      return warnings.map((args) => args.map(String));
+    }, JSON.stringify(documentReplacementEvents));
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('[replayer]');
+    expect(warnings[0].join(' ')).toContain('plugin build failed');
+  });
+
   it('should remove outdated hover styles in iframes and shadow doms', async () => {
     await page.evaluate(`events = ${JSON.stringify(hoverInIframeShadowDom)}`);
 
