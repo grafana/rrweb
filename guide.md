@@ -242,6 +242,7 @@ You may find some contents on the webpage which are not willing to be recorded, 
 - An element with the class name `.rr-ignore` will not record its input events.
 - All text of elements with the class name `.rr-mask` and their children will be masked.
 - `input[type="password"]` will be masked by default.
+- Hidden input values are masked with `maskAllInputs: true` or `maskInputOptions: { hidden: true }`.
 - Mask options to mask the content in input elements.
 
 #### Checkout

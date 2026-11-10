@@ -34,6 +34,7 @@ export type MaskInputOptions = Partial<{
   date: boolean;
   'datetime-local': boolean;
   email: boolean;
+  hidden: boolean;
   month: boolean;
   number: boolean;
   range: boolean;

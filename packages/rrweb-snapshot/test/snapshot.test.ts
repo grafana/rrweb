@@ -3,10 +3,12 @@
  */
 import { JSDOM } from 'jsdom';
 import { describe, expect, it } from 'vitest';
+import { NodeType } from '@grafana/rrweb-types';
 
 import snapshot, {
   _isBlockedElement,
   serializeNodeWithId,
+  visitSnapshot,
 } from '../src/snapshot';
 import { elementNode, serializedNodeWithId } from '../src/types';
 import { Mirror, absolutifyURLs } from '../src/utils';
@@ -234,6 +236,36 @@ describe('form', () => {
     });
     expect(sel?.childNodes).toEqual([]); // shouldn't be stored in childNodes while in transit
   });
+
+  it.each([
+    { options: undefined, expected: 'secret' },
+    { options: { maskAllInputs: false }, expected: 'secret' },
+    { options: { maskAllInputs: true }, expected: '******' },
+    { options: { maskAllInputs: { hidden: true } }, expected: '******' },
+    {
+      options: {
+        maskAllInputs: true,
+        maskInputFn: () => '[redacted]',
+      },
+      expected: '[redacted]',
+    },
+  ])(
+    'serializes hidden inputs with options $options',
+    ({ options, expected }) => {
+      document.body.innerHTML = '<input type="hidden" value="secret" />';
+      const serialized = snapshot(document, options);
+      const values: unknown[] = [];
+
+      expect(serialized).not.toBeNull();
+      visitSnapshot(serialized!, (node) => {
+        if (node.type === NodeType.Element && node.tagName === 'input') {
+          values.push(node.attributes.value);
+        }
+      });
+
+      expect(values).toEqual([expected]);
+    },
+  );
 });
 
 describe('jsdom snapshot', () => {
