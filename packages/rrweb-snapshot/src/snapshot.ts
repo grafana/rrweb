@@ -1066,7 +1066,9 @@ export function serializeNodeWithId(
     onSerialize(n);
   }
   let recordChild = !skipChild;
+  let isBlockedElement = false;
   if (serializedNode.type === NodeType.Element) {
+    isBlockedElement = Boolean(serializedNode.needBlock);
     recordChild = recordChild && !serializedNode.needBlock;
     // this property was not needed in replay side
     delete serializedNode.needBlock;
@@ -1156,7 +1158,8 @@ export function serializeNodeWithId(
 
   if (
     serializedNode.type === NodeType.Element &&
-    serializedNode.tagName === 'iframe'
+    serializedNode.tagName === 'iframe' &&
+    !isBlockedElement
   ) {
     onceIframeLoaded(
       n as HTMLIFrameElement,
