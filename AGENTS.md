@@ -125,6 +125,12 @@ Run rrweb tests with a visible browser for debugging:
 cd packages/rrweb && PUPPETEER_HEADLESS=false npm run test:headful
 ```
 
+Run rrweb-player unit tests:
+
+```sh
+cd packages/rrweb-player && npm test
+```
+
 Run the recorder REPL:
 
 ```sh
@@ -320,6 +326,8 @@ Important types and enums:
 Grafana added asset event types. `EventType.Asset` and the asset type aliases
 are public API. If event schema changes, update all affected record, replay,
 packer, docs, and tests together.
+`EventType.Annotation` carries caption and timeline marker data; keep it after
+`Asset` to preserve serialized enum values.
 
 Deprecated but still supported record options:
 
@@ -457,7 +465,9 @@ Root `npm test` runs Turbo tests with concurrency 1 and continues after
 failures. Use root tests for broad validation and package tests for focused
 work.
 
-Vitest config uses `pool: "forks"` for Vite 6 compatibility.
+Vitest config uses `pool: "forks"` for Vite 6 compatibility. The rrweb-player
+package uses Vitest for annotation and timeline-index helper tests; run them
+with `npm test --workspace @grafana/rrweb-player`.
 
 Puppeteer tests use `PUPPETEER_HEADLESS`:
 

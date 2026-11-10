@@ -4,6 +4,7 @@ import type * as puppeteer from 'puppeteer';
 import { vi } from 'vitest';
 import 'construct-style-sheets-polyfill';
 import type { recordOptions } from '../src/types';
+import type { annotationData } from '@grafana/rrweb-types';
 import {
   listenerHandler,
   eventWithTime,
@@ -34,6 +35,7 @@ interface IWindow extends Window {
       options: recordOptions<eventWithTime>,
     ) => listenerHandler | undefined) & {
       takeFullSnapshot: (isCheckout?: boolean | undefined) => void;
+      addAnnotation: (annotation: annotationData) => void;
     };
 
     freezePage(): void;
@@ -280,6 +282,79 @@ describe('record', function (this: ISuite) {
     });
     await ctx.page.waitForTimeout(50);
     await assertSnapshot(ctx.events);
+  });
+
+  it('records annotation events separately from custom events', async () => {
+    const result = await ctx.page.evaluate(() => {
+      const { record } = (window as unknown as IWindow).rrweb;
+      const events: eventWithTime[] = [];
+      let rejectedBeforeStart = false;
+      try {
+        record.addAnnotation({ type: 'caption', text: 'Too early' });
+      } catch {
+        rejectedBeforeStart = true;
+      }
+      const stop = record({ emit: (event) => events.push(event) });
+      record.addAnnotation({ type: 'caption', text: 'Hello' });
+      record.addCustomEvent('annotation', { type: 'caption', text: 'Custom' });
+      record.addAnnotation({ type: 'caption', text: '' });
+      record.addAnnotation({ type: 'caption', text: null });
+      record.addAnnotation({ type: 'caption', text: false });
+      record.addAnnotation({ type: 'timelineMarker', text: 'Milestone' });
+      stop?.();
+      let rejectedAfterStop = false;
+      try {
+        record.addAnnotation({ type: 'caption', text: 'Too late' });
+      } catch {
+        rejectedAfterStop = true;
+      }
+      return { events, rejectedBeforeStart, rejectedAfterStop };
+    });
+    expect(result.rejectedBeforeStart).toBe(true);
+    expect(result.rejectedAfterStop).toBe(true);
+    expect(EventType.Asset).toBe(7);
+    expect(EventType.Annotation).toBe(8);
+    expect(
+      result.events.filter((event) => event.type === EventType.Custom),
+    ).toEqual([
+      {
+        type: EventType.Custom,
+        timestamp: expect.any(Number),
+        data: {
+          tag: 'annotation',
+          payload: { type: 'caption', text: 'Custom' },
+        },
+      },
+    ]);
+    expect(
+      result.events.filter((event) => event.type === EventType.Annotation),
+    ).toEqual([
+      {
+        type: EventType.Annotation,
+        timestamp: expect.any(Number),
+        data: { type: 'caption', text: 'Hello' },
+      },
+      {
+        type: EventType.Annotation,
+        timestamp: expect.any(Number),
+        data: { type: 'caption', text: '' },
+      },
+      {
+        type: EventType.Annotation,
+        timestamp: expect.any(Number),
+        data: { type: 'caption', text: null },
+      },
+      {
+        type: EventType.Annotation,
+        timestamp: expect.any(Number),
+        data: { type: 'caption', text: false },
+      },
+      {
+        type: EventType.Annotation,
+        timestamp: expect.any(Number),
+        data: { type: 'timelineMarker', text: 'Milestone' },
+      },
+    ]);
   });
 
   it('captures stylesheet rules', async () => {

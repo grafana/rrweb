@@ -656,6 +656,7 @@ export class Replayer {
         case EventType.DomContentLoaded:
         case EventType.Load:
         case EventType.Custom:
+        case EventType.Annotation:
           continue;
         case EventType.FullSnapshot:
         case EventType.Meta:
@@ -675,6 +676,9 @@ export class Replayer {
     switch (event.type) {
       case EventType.DomContentLoaded:
       case EventType.Load:
+        break;
+      case EventType.Annotation:
+        castFn = () => this.emitter.emit(ReplayerEvents.Annotation, event);
         break;
       case EventType.Custom:
         castFn = () => {

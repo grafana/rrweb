@@ -19,6 +19,7 @@ import {
 import type { recordOptions } from '../types';
 import {
   EventType,
+  type annotationData,
   type eventWithoutTime,
   type eventWithTime,
   IncrementalSource,
@@ -636,6 +637,13 @@ record.addCustomEvent = <T>(tag: string, payload: T) => {
       payload,
     },
   });
+};
+
+record.addAnnotation = (annotation: annotationData) => {
+  if (!recording) {
+    throw new Error('please add annotation after recording started');
+  }
+  wrappedEmit({ type: EventType.Annotation, data: annotation });
 };
 
 record.freezePage = () => {
