@@ -34,7 +34,7 @@ jobs:
 
       - name: Mint GitHub App token
         id: app-token
-        uses: grafana/shared-workflows/actions/create-github-app-token@259ba21cb3ff07724f331e26d926d655d24b317b
+        uses: grafana/shared-workflows/actions/create-github-app-token@5bbb526b1728ca57fbe1750c4c27ab6ab06171c2 # create-github-app-token/v1.0.0
         with:
           github_app: grafana-session-replay-bot
 
