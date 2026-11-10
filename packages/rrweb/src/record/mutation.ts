@@ -256,6 +256,10 @@ export default class MutationBuffer {
     this.canvasManager.reset();
   }
 
+  public bufferBelongsToIframe = (iframeEl: HTMLIFrameElement) => {
+    return this.doc === iframeEl.contentDocument;
+  };
+
   public processMutations = (mutations: mutationRecord[]) => {
     mutations.forEach(this.processMutation); // adds mutations to the buffer
     this.emit(); // clears buffer if not locked/frozen

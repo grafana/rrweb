@@ -5,6 +5,15 @@ import { vi } from 'vitest';
 import 'construct-style-sheets-polyfill';
 import type { recordOptions } from '../src/types';
 import {
+  findAndRemoveIframeBuffer,
+  mutationBuffers,
+} from '../src/record/observer';
+import MutationBuffer from '../src/record/mutation';
+import { IframeManager } from '../src/record/iframe-manager';
+import type { serializedNodeWithId } from '@grafana/rrweb-types';
+import type { Mirror } from '@grafana/rrweb-snapshot';
+import type { StylesheetManager } from '../src/record/stylesheet-manager';
+import {
   listenerHandler,
   eventWithTime,
   EventType,
@@ -41,6 +50,70 @@ interface IWindow extends Window {
   };
   emit: (e: eventWithTime) => undefined;
 }
+
+describe('iframe mutation buffer cleanup', () => {
+  it('resets and removes only the buffer belonging to the navigating iframe', () => {
+    const contentDocument = {} as Document;
+    const iframe = { contentDocument } as HTMLIFrameElement;
+    const actualBuffer = new MutationBuffer();
+    (actualBuffer as unknown as { doc: Document }).doc = contentDocument;
+    expect(actualBuffer.bufferBelongsToIframe(iframe)).toBe(true);
+
+    const reset = vi.fn();
+    const removedBuffer = {
+      bufferBelongsToIframe: (element: HTMLIFrameElement) =>
+        element.contentDocument === contentDocument,
+      reset,
+    } as unknown as MutationBuffer;
+    const retainedBuffer = {
+      bufferBelongsToIframe: () => false,
+      reset: vi.fn(),
+    } as unknown as MutationBuffer;
+
+    mutationBuffers.push(removedBuffer, retainedBuffer);
+    try {
+      findAndRemoveIframeBuffer(iframe);
+
+      expect(reset).toHaveBeenCalledOnce();
+      expect(mutationBuffers).not.toContain(removedBuffer);
+      expect(mutationBuffers).toContain(retainedBuffer);
+    } finally {
+      const index = mutationBuffers.indexOf(retainedBuffer);
+      if (index !== -1) mutationBuffers.splice(index, 1);
+    }
+  });
+
+  it('keeps cross-origin message routing for the iframe window after pagehide', () => {
+    const contentWindow = new EventTarget() as Window;
+    const contentDocument = { adoptedStyleSheets: [] } as unknown as Document;
+    const iframe = { contentWindow, contentDocument } as HTMLIFrameElement;
+    const removeNodeFromMap = vi.fn();
+    const iframeManager = new IframeManager({
+      mirror: {
+        getId: () => 1,
+        removeNodeFromMap,
+      } as unknown as Mirror,
+      mutationCb: vi.fn(),
+      stylesheetManager: {
+        styleMirror: { generateId: () => 1 },
+      } as unknown as StylesheetManager,
+      recordCrossOriginIframes: false,
+      wrappedEmit: vi.fn(),
+    });
+    const crossOriginIframeMap = (
+      iframeManager as unknown as {
+        crossOriginIframeMap: WeakMap<MessageEventSource, HTMLIFrameElement>;
+      }
+    ).crossOriginIframeMap;
+
+    iframeManager.addIframe(iframe);
+    iframeManager.attachIframe(iframe, {} as serializedNodeWithId);
+    contentWindow.dispatchEvent(new Event('pagehide'));
+
+    expect(crossOriginIframeMap.get(contentWindow)).toBe(iframe);
+    expect(removeNodeFromMap).toHaveBeenCalledWith(contentDocument);
+  });
+});
 
 const setup = function (this: ISuite, content: string): ISuite {
   const ctx = {} as ISuite;
@@ -1050,6 +1123,52 @@ describe('record iframes', function (this: ISuite) {
       EventType.FullSnapshot,
       EventType.IncrementalSnapshot,
     ]);
+  });
+
+  it('continues observing an iframe after navigation', async () => {
+    await ctx.page.evaluate(() => {
+      const { record } = (window as unknown as IWindow).rrweb;
+      record({ emit: (window.top as unknown as IWindow).emit });
+    });
+    await waitForRAF(ctx.page);
+    ctx.events = [];
+
+    await ctx.page.evaluate(() => {
+      const iframe = document.querySelector('iframe')!;
+      iframe.srcdoc = '<p id="after-navigation">new document</p>';
+    });
+    await ctx.page.waitForFunction(
+      () =>
+        document
+          .querySelector('iframe')
+          ?.contentDocument?.getElementById('after-navigation') !== null,
+    );
+    await waitForRAF(ctx.page);
+
+    await ctx.page.evaluate(() => {
+      const iframe = document.querySelector('iframe')!;
+      iframe.contentDocument!.body.appendChild(
+        Object.assign(iframe.contentDocument!.createElement('button'), {
+          id: 'post-navigation-mutation',
+        }),
+      );
+    });
+    await waitForRAF(ctx.page);
+
+    expect(
+      ctx.events.some(
+        (event) =>
+          event.type === EventType.IncrementalSnapshot &&
+          event.data.source === IncrementalSource.Mutation &&
+          (
+            event.data as {
+              adds: { node: { attributes?: Record<string, string> } }[];
+            }
+          ).adds.some(
+            ({ node }) => node.attributes?.id === 'post-navigation-mutation',
+          ),
+      ),
+    ).toBe(true);
   });
 
   it('captures stylesheet mutations in iframes', async () => {

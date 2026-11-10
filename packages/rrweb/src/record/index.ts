@@ -4,7 +4,11 @@ import {
   type MaskInputOptions,
   createMirror,
 } from '@grafana/rrweb-snapshot';
-import { initObservers, mutationBuffers } from './observer';
+import {
+  initObservers,
+  mutationBuffers,
+  findAndRemoveIframeBuffer,
+} from './observer';
 import {
   on,
   getWindowWidth,
@@ -418,6 +422,7 @@ function record<T = eventWithTime>(
 
   try {
     const handlers: listenerHandler[] = [];
+    const iframeHandlersMap = new Map<HTMLIFrameElement, listenerHandler>();
 
     const observe = (doc: Document) => {
       return callbackWrapper(initObservers)(
@@ -556,11 +561,31 @@ function record<T = eventWithTime>(
 
     iframeManager.addLoadListener((iframeEl) => {
       try {
-        handlers.push(observe(iframeEl.contentDocument!));
+        const previousHandler = iframeHandlersMap.get(iframeEl);
+        if (previousHandler) {
+          try {
+            previousHandler();
+          } catch (error) {
+            const msg = String(error).toLowerCase();
+            if (!msg.includes('cross-origin')) {
+              console.warn(error);
+            }
+          }
+        }
+        iframeHandlersMap.set(iframeEl, observe(iframeEl.contentDocument!));
       } catch (error) {
         // TODO: handle internal error
         console.warn(error);
       }
+    });
+
+    iframeManager.addPageHideListener((iframeEl) => {
+      const iframeHandler = iframeHandlersMap.get(iframeEl);
+      if (iframeHandler) {
+        iframeHandler();
+        iframeHandlersMap.delete(iframeEl);
+      }
+      findAndRemoveIframeBuffer(iframeEl);
     });
 
     const init = () => {
@@ -595,6 +620,17 @@ function record<T = eventWithTime>(
       );
     }
     return () => {
+      iframeHandlersMap.forEach((handler) => {
+        try {
+          handler();
+        } catch (error) {
+          const msg = String(error).toLowerCase();
+          if (!msg.includes('cross-origin')) {
+            console.warn(error);
+          }
+        }
+      });
+      iframeHandlersMap.clear();
       handlers.forEach((handler) => {
         try {
           handler();
