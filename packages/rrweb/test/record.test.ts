@@ -804,6 +804,39 @@ describe('record', function (this: ISuite) {
     await assertSnapshot(ctx.events);
   });
 
+  it('ignores autoplay attribute mutations on media elements', async () => {
+    await ctx.page.evaluate(() => {
+      const video = document.createElement('video');
+      document.body.appendChild(video);
+      const { record } = (window as unknown as IWindow).rrweb;
+      record({
+        emit: (window as unknown as IWindow).emit,
+      });
+    });
+    await waitForRAF(ctx.page);
+
+    const eventsBeforeMutation = ctx.events.length;
+    await ctx.page.evaluate(() => {
+      document.querySelector('video')?.setAttribute('autoplay', '');
+    });
+    await waitForRAF(ctx.page);
+
+    const autoplayMutations = ctx.events
+      .slice(eventsBeforeMutation)
+      .flatMap((event) => {
+        if (
+          event.type !== EventType.IncrementalSnapshot ||
+          event.data.source !== IncrementalSource.Mutation
+        ) {
+          return [];
+        }
+        return event.data.attributes.filter(
+          (mutation) => 'autoplay' in mutation.attributes,
+        );
+      });
+    expect(autoplayMutations).toHaveLength(0);
+  });
+
   describe('loading stylesheets', () => {
     let server: Server;
     let serverURL: string;
