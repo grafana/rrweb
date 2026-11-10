@@ -411,6 +411,30 @@ describe('rebuild', function () {
     });
   });
 
+  describe('autocomplete', function () {
+    it('disables autocomplete on rebuilt input and textarea elements', function () {
+      for (const tagName of ['input', 'textarea']) {
+        const node = buildNodeWithSN(
+          {
+            id: 1,
+            tagName,
+            type: NodeType.Element,
+            attributes: { autocomplete: 'on' },
+            childNodes: [],
+          },
+          {
+            doc: document,
+            mirror,
+            hackCss: false,
+            cache,
+          },
+        ) as HTMLElement;
+
+        expect(node.getAttribute('autocomplete')).toBe('off');
+      }
+    });
+  });
+
   describe('rr_width/rr_height', function () {
     it('rebuild blocked element with correct dimensions', function () {
       const node = buildNodeWithSN(

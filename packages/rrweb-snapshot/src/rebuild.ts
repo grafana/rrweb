@@ -524,6 +524,10 @@ function buildNode(
           }
         }
       }
+      // Ask the browser not to autofill the viewer's personal data in replay.
+      if (tagName === 'input' || tagName === 'textarea') {
+        node.setAttribute('autocomplete', 'off');
+      }
       return node;
     }
     case NodeType.Text:
