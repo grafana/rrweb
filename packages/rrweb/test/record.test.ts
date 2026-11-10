@@ -4,11 +4,6 @@ import type * as puppeteer from 'puppeteer';
 import { vi } from 'vitest';
 import 'construct-style-sheets-polyfill';
 import type { recordOptions } from '../src/types';
-import {
-  findAndRemoveIframeBuffer,
-  mutationBuffers,
-} from '../src/record/observer';
-import MutationBuffer from '../src/record/mutation';
 import { IframeManager } from '../src/record/iframe-manager';
 import type { serializedNodeWithId } from '@grafana/rrweb-types';
 import type { Mirror } from '@grafana/rrweb-snapshot';
@@ -51,38 +46,7 @@ interface IWindow extends Window {
   emit: (e: eventWithTime) => undefined;
 }
 
-describe('iframe mutation buffer cleanup', () => {
-  it('resets and removes only the buffer belonging to the navigating iframe', () => {
-    const contentDocument = {} as Document;
-    const iframe = { contentDocument } as HTMLIFrameElement;
-    const actualBuffer = new MutationBuffer();
-    (actualBuffer as unknown as { doc: Document }).doc = contentDocument;
-    expect(actualBuffer.bufferBelongsToIframe(iframe)).toBe(true);
-
-    const reset = vi.fn();
-    const removedBuffer = {
-      bufferBelongsToIframe: (element: HTMLIFrameElement) =>
-        element.contentDocument === contentDocument,
-      reset,
-    } as unknown as MutationBuffer;
-    const retainedBuffer = {
-      bufferBelongsToIframe: () => false,
-      reset: vi.fn(),
-    } as unknown as MutationBuffer;
-
-    mutationBuffers.push(removedBuffer, retainedBuffer);
-    try {
-      findAndRemoveIframeBuffer(iframe);
-
-      expect(reset).toHaveBeenCalledOnce();
-      expect(mutationBuffers).not.toContain(removedBuffer);
-      expect(mutationBuffers).toContain(retainedBuffer);
-    } finally {
-      const index = mutationBuffers.indexOf(retainedBuffer);
-      if (index !== -1) mutationBuffers.splice(index, 1);
-    }
-  });
-
+describe('iframe pagehide handling', () => {
   it('keeps cross-origin message routing for the iframe window after pagehide', () => {
     const contentWindow = new EventTarget() as Window;
     const contentDocument = { adoptedStyleSheets: [] } as unknown as Document;

@@ -4,12 +4,7 @@ import {
   type MaskInputOptions,
   createMirror,
 } from '@grafana/rrweb-snapshot';
-import {
-  initObservers,
-  mutationBuffers,
-  forEachMutationBuffer,
-  findAndRemoveIframeBuffer,
-} from './observer';
+import { initObservers, mutationBuffers } from './observer';
 import {
   on,
   getWindowWidth,
@@ -191,16 +186,21 @@ function record<T = eventWithTime>(
     const e = r as eventWithTime;
     e.timestamp = nowTimestamp();
     if (
-      mutationBuffers[0]?.isFrozen() &&
       e.type !== EventType.FullSnapshot &&
       !(
         e.type === EventType.IncrementalSnapshot &&
         e.data.source === IncrementalSource.Mutation
       )
     ) {
-      // we've got a user initiated event so first we need to apply
-      // all DOM changes that have been buffering during paused state
-      forEachMutationBuffer((buf) => buf.unfreeze());
+      // we've got a user initiated event so if we've been frozen we first need
+      // to apply all DOM changes that have been buffering during paused state
+      for (const buf of mutationBuffers) {
+        if (buf.isFrozen()) {
+          buf.unfreeze();
+        } else {
+          break; // just need to check one as they all get frozen together
+        }
+      }
     }
 
     if (inEmittingFrame) {
@@ -360,7 +360,7 @@ function record<T = eventWithTime>(
 
     shadowDomManager.init();
 
-    forEachMutationBuffer((buf) => buf.lock()); // don't allow any mirror modifications during snapshotting
+    mutationBuffers.forEach((buf) => buf.lock()); // don't allow any mirror modifications during snapshotting
     const node = snapshot(document, {
       mirror,
       blockClass,
@@ -411,7 +411,7 @@ function record<T = eventWithTime>(
       },
       isCheckout,
     );
-    forEachMutationBuffer((buf) => buf.unlock()); // generate & emit any mutations that happened during snapshotting, as can now apply against the newly built mirror
+    mutationBuffers.forEach((buf) => buf.unlock()); // generate & emit any mutations that happened during snapshotting, as can now apply against the newly built mirror
 
     // Some old browsers don't support adoptedStyleSheets.
     if (document.adoptedStyleSheets && document.adoptedStyleSheets.length > 0)
@@ -586,7 +586,12 @@ function record<T = eventWithTime>(
         iframeHandler();
         iframeHandlersMap.delete(iframeEl);
       }
-      findAndRemoveIframeBuffer(iframeEl);
+      for (const buf of mutationBuffers) {
+        if (buf.bufferBelongsToIframe(iframeEl)) {
+          buf.reset();
+          mutationBuffers.delete(buf);
+        }
+      }
     });
 
     const init = () => {
@@ -675,7 +680,7 @@ record.addCustomEvent = <T>(tag: string, payload: T) => {
 };
 
 record.freezePage = () => {
-  forEachMutationBuffer((buf) => buf.freeze());
+  mutationBuffers.forEach((buf) => buf.freeze());
 };
 
 record.takeFullSnapshot = (isCheckout?: boolean) => {
