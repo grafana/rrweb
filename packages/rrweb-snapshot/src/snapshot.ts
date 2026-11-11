@@ -1316,6 +1316,7 @@ function snapshot(
           date: true,
           'datetime-local': true,
           email: true,
+          hidden: true,
           month: true,
           number: true,
           range: true,

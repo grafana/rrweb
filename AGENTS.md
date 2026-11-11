@@ -340,6 +340,8 @@ Preserve defaults unless a task explicitly changes them:
 - `ignoreClass = "rr-ignore"`
 - `maskTextClass = "rr-mask"`
 - Password inputs are masked by default.
+- Hidden input values are masked with `maskAllInputs: true` or
+  `maskInputOptions.hidden: true`.
 - `inlineStylesheet = true`
 - `inlineImages = false`
 - `recordAfter = "load"` unless `DOMContentLoaded` is requested.
