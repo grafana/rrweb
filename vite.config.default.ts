@@ -16,7 +16,7 @@ const emptyOutDir = !process.argv.includes('--watch');
  */
 const disableWorkerInlining = process.env.DISABLE_WORKER_INLINING === 'true';
 
-function minifyAndUMDPlugin({
+export function minifyAndUMDPlugin({
   name,
   outDir,
 }: {
@@ -27,19 +27,16 @@ function minifyAndUMDPlugin({
     name: 'minify-plugin',
     async writeBundle(outputOptions, bundle) {
       for (const file of Object.values(bundle)) {
-        if (
-          file.type === 'asset' &&
-          (file.fileName.endsWith('.cjs.map') || file.fileName.endsWith('.css'))
-        ) {
-          const isCSS = file.fileName.endsWith('.css');
-          const inputFilePath = resolve(
-            outputOptions.dir!,
-            file.fileName,
-          ).replace(/\.map$/, '');
-          const baseFileName = file.fileName.replace(
-            /(\.cjs|\.css)(\.map)?$/,
-            '',
-          );
+        // Facade chunks can re-export other entries without a source map.
+        // Only public entries need UMD builds, not their shared chunks.
+        const isEntry =
+          outputOptions.format === 'cjs' &&
+          file.type === 'chunk' &&
+          file.isEntry;
+        const isCSS = file.type === 'asset' && file.fileName.endsWith('.css');
+        if (isEntry || isCSS) {
+          const inputFilePath = resolve(outputOptions.dir!, file.fileName);
+          const baseFileName = file.fileName.replace(/\.(cjs|js|mjs|css)$/, '');
           const outputFilePath = resolve(outputOptions.dir!, baseFileName);
           // console.log(outputFilePath, 'minifying', file.fileName);
           if (isCSS) {
@@ -55,34 +52,24 @@ function minifyAndUMDPlugin({
             if (!existsSync(umdDir)) {
               mkdirSync(umdDir);
             }
-            const outUmd = `${outputFilePath}.umd.cjs`;
-            await buildFile({
-              name,
-              input: inputFilePath,
-              output: outUmd,
-              minify: false,
-              isCss: false,
-              outDir,
-            });
-            // Workaround because jsdelivr does use correct mime types for .umd.cjs
-            // More info: https://github.com/jsdelivr/jsdelivr/issues/18584 https://github.com/rrweb-io/rrweb/pull/1704
-            copyFileSync(
-              outUmd,
-              `${outputFilePath.replace('/dist/', '/umd/')}.js`,
-            );
-            const outUmdMin = `${outputFilePath}.umd.min.cjs`;
-            await buildFile({
-              name,
-              input: inputFilePath,
-              output: outUmdMin,
-              minify: true,
-              isCss: false,
-              outDir,
-            });
-            copyFileSync(
-              outUmdMin,
-              `${outputFilePath.replace('/dist/', '/umd/')}.min.js`,
-            );
+            for (const minify of [false, true]) {
+              const suffix = minify ? '.min' : '';
+              const output = `${outputFilePath}.umd${suffix}.cjs`;
+              await buildFile({
+                name,
+                input: inputFilePath,
+                output,
+                minify,
+                isCss: false,
+                outDir,
+              });
+              // Workaround because jsDelivr does not use correct MIME types for .umd.cjs.
+              // More info: https://github.com/jsdelivr/jsdelivr/issues/18584 https://github.com/rrweb-io/rrweb/pull/1704
+              copyFileSync(
+                output,
+                `${outputFilePath.replace('/dist/', '/umd/')}${suffix}.js`,
+              );
+            }
           }
         }
       }
@@ -107,6 +94,9 @@ async function buildFile({
 }) {
   await build({
     entryPoints: [input],
+    // Packer UMD entrypoints must work without a CommonJS loader or sibling files.
+    // Keep the previous handling for other packages, including Node-only imports.
+    bundle: !isCss && name === 'rrwebPacker',
     outfile: output,
     minify,
     sourcemap: true,
