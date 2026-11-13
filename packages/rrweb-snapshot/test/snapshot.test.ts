@@ -7,6 +7,7 @@ import { NodeType } from '@grafana/rrweb-types';
 
 import snapshot, {
   _isBlockedElement,
+  ignoreAttribute,
   serializeNodeWithId,
   visitSnapshot,
 } from '../src/snapshot';
@@ -177,6 +178,23 @@ describe('isBlockedElement()', () => {
     expect(
       subject('<div data-rr-block />', { blockSelector: '[data-rr-block]' }),
     ).toEqual(true);
+  });
+});
+
+describe('ignoreAttribute()', () => {
+  it('ignores autoplay on lowercase media tag names', () => {
+    expect(ignoreAttribute('video', 'autoplay', '')).toEqual(true);
+    expect(ignoreAttribute('audio', 'autoplay', '')).toEqual(true);
+  });
+
+  it('ignores autoplay regardless of attribute-name case', () => {
+    expect(ignoreAttribute('video', 'AUTOPLAY', '')).toEqual(true);
+    expect(ignoreAttribute('audio', 'AutoPlay', '')).toEqual(true);
+  });
+
+  it('does not ignore other attributes or other elements', () => {
+    expect(ignoreAttribute('video', 'src', '')).toEqual(false);
+    expect(ignoreAttribute('div', 'autoplay', '')).toEqual(false);
   });
 });
 
