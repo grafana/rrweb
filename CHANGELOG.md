@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.0.0-grafana.3](https://github.com/grafana/rrweb/compare/v2.0.0-grafana.2...v2.0.0-grafana.3) (2026-11-13)
+
+
+### Bug Fixes
+
+* **ci:** pin GitHub Actions to Ubuntu 24.04 ([#64](https://github.com/grafana/rrweb/issues/64)) ([4901169](https://github.com/grafana/rrweb/commit/4901169c64d6d5e0179023f0309bfa73cbef8356))
+* **ci:** use allowed GitHub App token action ([#65](https://github.com/grafana/rrweb/issues/65)) ([41d5347](https://github.com/grafana/rrweb/commit/41d53470958a328058cebfe6449890c1a58d96d6))
+* disable autocomplete in replayed fields ([#75](https://github.com/grafana/rrweb/issues/75)) ([38081c4](https://github.com/grafana/rrweb/commit/38081c435a4e2e6f2e6bc1277371e80c1e3648cd))
+* generate packer UMD bundles from emitted entry chunks ([#83](https://github.com/grafana/rrweb/issues/83)) ([285d1af](https://github.com/grafana/rrweb/commit/285d1affd8402375e0c24234f8c9305c30be4bbe))
+* ignore autoplay mutations regardless of tag case ([#73](https://github.com/grafana/rrweb/issues/73)) ([718e18a](https://github.com/grafana/rrweb/commit/718e18a755d04a302f351dbf3959f5242a6f2714))
+* mask hidden inputs when maskAllInputs is enabled ([#67](https://github.com/grafana/rrweb/issues/67)) ([cdb436a](https://github.com/grafana/rrweb/commit/cdb436a40aa4cf2fceecad50e50deed8c9221e73))
+* preserve live images when inline CORS fails ([#60](https://github.com/grafana/rrweb/issues/60)) ([330004a](https://github.com/grafana/rrweb/commit/330004a5e5a2da9cf843b0a3c7801f377521ad2c))
+* **rrweb-player:** resolve Svelte browser runtime ([#78](https://github.com/grafana/rrweb/issues/78)) ([88a51d5](https://github.com/grafana/rrweb/commit/88a51d5cb253920839927831eb22b1ed2c67de63))
+* **rrweb-snapshot:** preserve blob URLs in CSS ([#68](https://github.com/grafana/rrweb/issues/68)) ([3117342](https://github.com/grafana/rrweb/commit/31173423a5791376466a819ff96e35205505bd45))
+* **rrweb-snapshot:** preserve fragment-only CSS URLs ([#69](https://github.com/grafana/rrweb/issues/69)) ([09b3a6b](https://github.com/grafana/rrweb/commit/09b3a6b674b3c89da6cc49fd511476af5446b236))
+* **security/critical/:** update dependency happy-dom to v21 [security] ([#62](https://github.com/grafana/rrweb/issues/62)) ([18b9796](https://github.com/grafana/rrweb/commit/18b979603c8fc43e22ebe719a7acd7355b284509))
+* **security/high/packages/web-extension:** update dependency nanoid to v5 [security] ([#63](https://github.com/grafana/rrweb/issues/63)) ([19343c8](https://github.com/grafana/rrweb/commit/19343c80646ece65132943159e60b564b0ae3967))
+* **security/high/:** update dependency browserslist to v4.28.7 [security] ([#61](https://github.com/grafana/rrweb/issues/61)) ([2ee193b](https://github.com/grafana/rrweb/commit/2ee193b92998e17a835bde038fa793b7ce4469ec))
+* **security:** update fflate to 0.4.9 ([#70](https://github.com/grafana/rrweb/issues/70)) ([4348801](https://github.com/grafana/rrweb/commit/4348801c833d3c13091a7506a0ca875c8d3bcbb7))
+* **security:** update PostCSS to 8.5.32 ([#72](https://github.com/grafana/rrweb/issues/72)) ([79ccaf4](https://github.com/grafana/rrweb/commit/79ccaf4bc3c8fffe89771ef671193ce776f03319))
+* skip serialization of blocked iframe documents ([#81](https://github.com/grafana/rrweb/issues/81)) ([69bbb6b](https://github.com/grafana/rrweb/commit/69bbb6b5977b73ea442f68dd4005541ce862d399))
+
 ## [2.0.0-grafana.2](https://github.com/grafana/rrweb/compare/v2.0.0-grafana.1...v2.0.0-grafana.2) (2026-06-22)
 
 
