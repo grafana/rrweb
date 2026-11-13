@@ -177,6 +177,25 @@ describe('Shadow observer lifecycle (regression)', () => {
     expect(mutationBuffers).not.toContain(shadowBuffer);
   });
 
+  it('releases detached shadow observers while mutation buffers are frozen', () => {
+    const addSpy = vi.spyOn(mutationBuffers, 'add');
+    const { host } = createDropdown(doc);
+    doc.body.appendChild(host);
+    buffer.processMutations([childListMutation(doc.body, [host])]);
+    const [shadowBuffer] = addSpy.mock.calls.map((call) => call[0]);
+    expect(mutationBuffers).toContain(shadowBuffer);
+
+    buffer.freeze();
+    mutationBuffers.forEach((mutationBuffer) => mutationBuffer.freeze());
+    host.remove();
+    buffer.processMutations([childListMutation(doc.body, [], [host])]);
+
+    expect(mutationBuffers).not.toContain(shadowBuffer);
+
+    buffer.unfreeze();
+    mutationBuffers.forEach((mutationBuffer) => mutationBuffer.unfreeze());
+  });
+
   it('does not accumulate one mutation buffer per removed component', () => {
     const baseline = mutationBuffers.size;
     const cycles = 5;
