@@ -13,6 +13,8 @@
     "build-and-test": "npm run build && npm run retest",
     "test:headless": "cross-env PUPPETEER_HEADLESS=true npm run build-and-test",
     "test:headful": "cross-env PUPPETEER_HEADLESS=false npm run build-and-test",
+    "test:replay-review": "node test/e2e/replay-review.mjs",
+    "test:faro-benchmark": "node test/e2e/faro-benchmark.mjs",
     "test": "npm run test:headless",
     "test:watch": "npm run build && cross-env PUPPETEER_HEADLESS=true vitest --exclude test/benchmark",
     "test:update": "cross-env PUPPETEER_HEADLESS=true npm run build && vitest run --exclude test/benchmark --update",

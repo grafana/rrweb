@@ -35,3 +35,6 @@ vite.config.ts.timestamp-*
 
 # bundle analysis files
 *-bundle-analysis.html
+
+# Replay review POC output
+packages/rrweb/test-results/

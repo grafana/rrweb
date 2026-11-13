@@ -51,6 +51,31 @@ jobs:
       - name: Build
         run: npm run build:all
 
+      - name: Checkout pinned Faro Web SDK
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          repository: grafana/faro-web-sdk
+          ref: c8e33b9f0dd211f63b43b55a4677b5378612a9b2
+          path: faro-web-sdk
+          persist-credentials: false
+
+      - name: Record and replay review fixture
+        run: npm run test:replay-review -w @grafana/rrweb
+
+      - name: Run three-mode Faro benchmark
+        run: npm run test:faro-benchmark -w @grafana/rrweb
+        env:
+          FARO_WEB_SDK_PATH: faro-web-sdk
+
+      - name: Upload replay and benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rrweb-replay-review
+          path: packages/rrweb/test-results/replay-review/
+          if-no-files-found: ignore
+          retention-days: 3
+
       - name: Lint
         run: npm run lint
 
