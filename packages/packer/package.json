@@ -77,7 +77,7 @@
     "typescript": "^5.4.5"
   },
   "dependencies": {
-    "fflate": "^0.4.4",
+    "fflate": "^0.4.9",
     "@grafana/rrweb-types": "^2.0.0-grafana.2"
   },
   "browserslist": [
