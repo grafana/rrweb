@@ -3,9 +3,19 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { gzipSync, brotliCompressSync } from 'node:zlib';
-import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  realpath,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpdir } from 'node:os';
 import { chromium } from 'playwright';
 
 const FARO_COMMIT = 'c8e33b9f0dd211f63b43b55a4677b5378612a9b2';
@@ -34,14 +44,15 @@ const artifactDir = resolve(
     join(packageDir, 'test-results/replay-review'),
 );
 const fixtureSource = resolve(packageDir, 'test/e2e/faro-benchmark-app');
-const faroDir = resolve(
+const faroCheckoutDir = resolve(
   repoRoot,
   process.env['FARO_WEB_SDK_PATH'] ?? 'faro-web-sdk',
 );
-const scratchDir = resolve(faroDir, '.rrweb-poc');
-const tarballDir = join(scratchDir, 'rrweb-packages');
-const appDir = join(scratchDir, 'app');
-const outputDir = join(scratchDir, 'site-builds');
+let faroDir;
+let scratchDir;
+let tarballDir;
+let appDir;
+let outputDir;
 
 function run(command, args, cwd, options = {}) {
   return new Promise((resolveRun, rejectRun) => {
@@ -150,32 +161,55 @@ async function buildFaro() {
 async function verifyResolution(artifacts) {
   const replayDir = join(faroDir, 'experimental/instrumentation-replay');
   const localRequire = createRequire(join(replayDir, 'package.json'));
-  const resolvedEntry = localRequire.resolve('@grafana/rrweb');
-  let manifestPath = dirname(resolvedEntry);
-  let resolvedVersion;
-  while (manifestPath !== dirname(manifestPath)) {
-    const candidate = join(manifestPath, 'package.json');
-    try {
-      const manifest = JSON.parse(await readFile(candidate, 'utf8'));
-      if (manifest.name === '@grafana/rrweb') {
-        assert.equal(manifest.version, artifacts['@grafana/rrweb'].version);
-        resolvedVersion = manifest.version;
-        break;
-      }
-    } catch {}
-    manifestPath = dirname(manifestPath);
-  }
-  assert.equal(
-    resolvedVersion,
-    artifacts['@grafana/rrweb'].version,
-    'could not verify the installed @grafana/rrweb package manifest',
-  );
   const lockfile = await readFile(join(faroDir, 'yarn.lock'), 'utf8');
-  assert.ok(
-    lockfile.includes(artifacts['@grafana/rrweb'].filename),
-    'Faro lockfile does not refer to the packed PR rrweb artifact',
+  const rootPackage = JSON.parse(
+    await readFile(join(faroDir, 'package.json'), 'utf8'),
   );
-  return { resolvedEntry, resolvedVersion };
+  const resolvedPackages = {};
+  for (const packageName of FARO_PACKAGES) {
+    const resolvedEntry = localRequire.resolve(packageName);
+    let manifestPath = dirname(resolvedEntry);
+    let resolvedVersion;
+    while (manifestPath !== dirname(manifestPath)) {
+      const candidate = join(manifestPath, 'package.json');
+      try {
+        const manifest = JSON.parse(await readFile(candidate, 'utf8'));
+        if (manifest.name === packageName) {
+          assert.equal(manifest.version, artifacts[packageName].version);
+          resolvedVersion = manifest.version;
+          break;
+        }
+      } catch {}
+      manifestPath = dirname(manifestPath);
+    }
+    assert.equal(
+      resolvedVersion,
+      artifacts[packageName].version,
+      `could not verify installed ${packageName} package manifest`,
+    );
+    const localResolution = `file:.rrweb-poc/rrweb-packages/${artifacts[packageName].filename}`;
+    assert.equal(
+      rootPackage.resolutions?.[packageName],
+      localResolution,
+      `Faro resolution for ${packageName} must select the packed PR artifact`,
+    );
+    const lockEntry = lockfile
+      .split('\n\n')
+      .find((entry) =>
+        entry.split('\n', 1)[0].includes(`${packageName}@${localResolution}`),
+      );
+    assert.ok(
+      lockEntry,
+      `Faro lockfile has no exact local-tarball entry for ${packageName}`,
+    );
+    resolvedPackages[packageName] = {
+      resolvedEntry,
+      resolvedVersion,
+      localResolution,
+      lockEntry: lockEntry.split('\n', 1)[0],
+    };
+  }
+  return resolvedPackages;
 }
 
 async function makeApps() {
@@ -200,14 +234,24 @@ async function makeApps() {
 }
 
 function classifyModules(ids) {
-  const joined = ids.join('\n');
+  const appPrefix = `${appDir.replaceAll('\\', '/')}/`;
+  const joined = ids
+    .map((id) => id.replaceAll('\\', '/'))
+    .filter((id) => !id.startsWith(appPrefix))
+    .join('\n');
   return {
-    faroWebSdk: /faro-web-sdk|packages\/web-sdk/.test(joined),
-    replayInstrumentation:
-      /faro-instrumentation-replay|experimental\/instrumentation-replay/.test(
+    faroWebSdk:
+      /(?:node_modules\/@grafana\/faro-web-sdk|packages\/web-sdk)(?:\/|$)/.test(
         joined,
       ),
-    rrweb: /@grafana\/rrweb|rrweb\.js/.test(joined),
+    replayInstrumentation:
+      /(?:node_modules\/@grafana\/faro-instrumentation-replay|experimental\/instrumentation-replay)(?:\/|$)/.test(
+        joined,
+      ),
+    rrweb:
+      /(?:node_modules\/@grafana\/rrweb|@grafana\/rrweb|rrweb\.js)(?:\/|$)/.test(
+        joined,
+      ),
   };
 }
 
@@ -312,9 +356,16 @@ async function startReceiver() {
       for await (const chunk of request) chunks.push(chunk);
       const body = Buffer.concat(chunks);
       const runId = url.searchParams.get('run') ?? 'unknown';
-      const stats = received.get(runId) ?? { requestCount: 0, bytes: 0 };
+      const stats = received.get(runId) ?? {
+        requestCount: 0,
+        bytes: 0,
+        replayEvents: 0,
+      };
       stats.requestCount++;
       stats.bytes += body.length;
+      stats.replayEvents += (
+        body.toString().match(/faro\.session_recording\.event/g) ?? []
+      ).length;
       received.set(runId, stats);
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end('{}');
@@ -363,6 +414,27 @@ async function startReceiver() {
     received,
     origin: `http://127.0.0.1:${address.port}`,
   };
+}
+
+async function waitForTransport(receiver, runId, expectedReplayEvents = 0) {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    const stats = receiver.received.get(runId);
+    if (
+      stats &&
+      stats.requestCount > 0 &&
+      stats.replayEvents >= expectedReplayEvents
+    ) {
+      return;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+  }
+  const stats = receiver.received.get(runId);
+  throw new Error(
+    `Faro transport did not deliver expected events for ${runId}: ${JSON.stringify(
+      stats ?? null,
+    )}`,
+  );
 }
 
 async function runSample(
@@ -434,7 +506,16 @@ async function runSample(
       { timeout: 10_000 },
     );
   }
-  await page.waitForTimeout(250);
+  const emittedReplayEventCount = await page.evaluate(
+    () => window.__rrwebBenchmark.replayEventCount,
+  );
+  if (mode !== 'vanilla') {
+    await waitForTransport(
+      receiver,
+      runId,
+      mode === 'faro-replay' ? emittedReplayEventCount : 0,
+    );
+  }
   const after = await page.evaluate(() => ({
     benchmark: { ...window.__rrwebBenchmark },
     longTaskSupported: window.__longTaskSupported,
@@ -450,7 +531,21 @@ async function runSample(
   const transport = receiver.received.get(runId) ?? {
     requestCount: 0,
     bytes: 0,
+    replayEvents: 0,
   };
+  if (mode === 'vanilla') {
+    assert.equal(
+      transport.requestCount,
+      0,
+      'vanilla should send no Faro traffic',
+    );
+  } else {
+    assert.ok(
+      transport.requestCount > 0,
+      `${mode} should reach the local Faro receiver`,
+    );
+    assert.ok(transport.bytes > 0, `${mode} should send payload bytes`);
+  }
   const sample = {
     mode,
     workload: workload.name,
@@ -465,6 +560,7 @@ async function runSample(
     workloadMs: workloadTiming.syncWorkloadMs,
     workloadSettledMs: workloadTiming.settledWorkloadMs,
     eventCount: after.benchmark.replayEventCount,
+    deliveredReplayEventCount: transport.replayEvents,
     transportRequestCount: transport.requestCount,
     transportBytes: transport.bytes,
     workloadLongTaskCount: after.longTaskSupported
@@ -596,7 +692,10 @@ function renderMarkdown(report) {
   const lines = [
     '# Faro replay benchmark (report only)',
     '',
-    `- rrweb commit: \`${report.metadata.rrwebCommit}\``,
+    `- rrweb checkout commit: \`${report.metadata.rrwebCheckoutCommit}\``,
+    `- PR head commit: \`${
+      report.metadata.rrwebPrHeadCommit ?? 'local / unavailable'
+    }\``,
     `- Faro commit: \`${report.metadata.faroCommit}\``,
     `- Browser: ${report.metadata.browser.version} (${report.metadata.platform})`,
     `- Samples: ${REPETITIONS} repetitions plus ${WARMUPS} warmup per mode/workload; fresh context per run`,
@@ -691,6 +790,7 @@ function renderMarkdown(report) {
 async function collectMetadata(rrwebArtifacts, resolution, browser) {
   const git = await run('git', ['rev-parse', 'HEAD'], repoRoot);
   const faro = await run('git', ['rev-parse', 'HEAD'], faroDir);
+  const rrwebStatus = await run('git', ['status', '--porcelain'], repoRoot);
   const nodeVersion = process.version;
   const osInfo = await run(
     'node',
@@ -698,7 +798,9 @@ async function collectMetadata(rrwebArtifacts, resolution, browser) {
     repoRoot,
   );
   return {
-    rrwebCommit: git.stdout.trim(),
+    rrwebCheckoutCommit: git.stdout.trim(),
+    rrwebPrHeadCommit: process.env['RRWEB_PR_HEAD_SHA'] ?? null,
+    rrwebWorkingTreeDirty: Boolean(rrwebStatus.stdout.trim()),
     faroCommit: faro.stdout.trim(),
     expectedFaroCommit: FARO_COMMIT,
     rrwebPackages: Object.fromEntries(
@@ -727,97 +829,156 @@ async function collectMetadata(rrwebArtifacts, resolution, browser) {
   };
 }
 
-const faroHead = (
-  await run('git', ['rev-parse', 'HEAD'], faroDir)
-).stdout.trim();
-assert.equal(
-  faroHead,
-  FARO_COMMIT,
-  `Faro checkout must be pinned to ${FARO_COMMIT}`,
-);
-await mkdir(artifactDir, { recursive: true });
-await mkdir(scratchDir, { recursive: true });
-await mkdir(outputDir, { recursive: true });
+async function main() {
+  const faroHead = (
+    await run('git', ['rev-parse', 'HEAD'], faroCheckoutDir)
+  ).stdout.trim();
+  assert.equal(
+    faroHead,
+    FARO_COMMIT,
+    `Faro checkout must be pinned to ${FARO_COMMIT}`,
+  );
+  const tempRoot = await mkdtemp(join(tmpdir(), 'rrweb-faro-benchmark-'));
+  faroDir = join(tempRoot, 'faro-web-sdk');
+  scratchDir = join(faroDir, '.rrweb-poc');
+  tarballDir = join(scratchDir, 'rrweb-packages');
+  appDir = join(scratchDir, 'app');
+  outputDir = join(scratchDir, 'site-builds');
+  let faroWorktreeCreated = false;
+  let primaryError;
+  try {
+    await run(
+      'git',
+      ['worktree', 'add', '--detach', faroDir, FARO_COMMIT],
+      faroCheckoutDir,
+    );
+    faroWorktreeCreated = true;
+    await mkdir(artifactDir, { recursive: true });
+    await mkdir(scratchDir, { recursive: true });
+    await mkdir(outputDir, { recursive: true });
 
-const rrwebArtifacts = await packRrweb();
-await installFaroWithLocalRrweb(rrwebArtifacts);
-const resolution = await verifyResolution(rrwebArtifacts);
-await buildFaro();
-await makeApps();
-const bundles = await buildApps();
+    const rrwebArtifacts = await packRrweb();
+    await installFaroWithLocalRrweb(rrwebArtifacts);
+    const resolution = await verifyResolution(rrwebArtifacts);
+    await buildFaro();
+    await makeApps();
+    const bundles = await buildApps();
 
-const browser = await chromium.launch({ headless: true });
-const receiver = await startReceiver();
-const runtime = { samples: [], summaries: {}, pairedDeltas: [] };
-try {
-  for (const workload of WORKLOADS) {
-    const samples = [];
-    for (let repetition = -WARMUPS; repetition < REPETITIONS; repetition++) {
-      const startIndex = Math.abs(repetition) % MODES.length;
-      const order = [...MODES.slice(startIndex), ...MODES.slice(0, startIndex)];
-      for (const mode of order) {
-        samples.push(
-          await runSample(
-            browser,
-            receiver,
-            workload,
-            mode,
-            repetition,
-            repetition < 0,
-          ),
-        );
+    const browser = await chromium.launch({ headless: true });
+    const receiver = await startReceiver();
+    const runtime = { samples: [], summaries: {}, pairedDeltas: [] };
+    try {
+      for (const workload of WORKLOADS) {
+        const samples = [];
+        for (
+          let repetition = -WARMUPS;
+          repetition < REPETITIONS;
+          repetition++
+        ) {
+          const startIndex = Math.abs(repetition) % MODES.length;
+          const order = [
+            ...MODES.slice(startIndex),
+            ...MODES.slice(0, startIndex),
+          ];
+          for (const mode of order) {
+            samples.push(
+              await runSample(
+                browser,
+                receiver,
+                workload,
+                mode,
+                repetition,
+                repetition < 0,
+              ),
+            );
+          }
+        }
+        runtime.samples.push(...samples);
+        runtime.summaries[workload.name] = summarize(samples);
       }
+      runtime.pairedDeltas = pairedDeltas(runtime.samples);
+    } finally {
+      await browser.close();
+      await new Promise((resolveClose) => receiver.server.close(resolveClose));
     }
-    runtime.samples.push(...samples);
-    runtime.summaries[workload.name] = summarize(samples);
+
+    const modeTotal = Object.fromEntries(
+      MODES.map((mode) => [mode, bundles[mode].total]),
+    );
+    const bundleDeltas = {
+      faroMinusVanilla: Object.fromEntries(
+        ['rawBytes', 'gzipBytes', 'brotliBytes'].map((key) => [
+          key,
+          modeTotal.faro[key] - modeTotal.vanilla[key],
+        ]),
+      ),
+      replayMinusFaro: Object.fromEntries(
+        ['rawBytes', 'gzipBytes', 'brotliBytes'].map((key) => [
+          key,
+          modeTotal['faro-replay'][key] - modeTotal.faro[key],
+        ]),
+      ),
+      replayMinusVanilla: Object.fromEntries(
+        ['rawBytes', 'gzipBytes', 'brotliBytes'].map((key) => [
+          key,
+          modeTotal['faro-replay'][key] - modeTotal.vanilla[key],
+        ]),
+      ),
+    };
+    const report = {
+      metadata: await collectMetadata(rrwebArtifacts, resolution, browser),
+      bundle: { sizes: modeTotal, deltas: bundleDeltas, details: bundles },
+      runtime,
+      limitations: [
+        'Enabled-versus-disabled configuration overhead at this revision is not a PR-versus-main regression comparison.',
+        'Navigation and workload timings include browser scheduling; they do not attribute wall-clock time to rrweb internals.',
+        'Three repetitions are for directional visibility only; no tail-performance claim or pass/fail performance threshold is made.',
+        'The Faro receiver is local and does not represent Cloud network latency or ingestion behavior.',
+      ],
+    };
+    await writeFile(
+      join(artifactDir, 'faro-benchmark.json'),
+      `${JSON.stringify(report, null, 2)}\n`,
+    );
+    await writeFile(
+      join(artifactDir, 'faro-benchmark.md'),
+      renderMarkdown(report),
+    );
+    console.log(renderMarkdown(report));
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    let cleanupError;
+    try {
+      const canonicalFaroDir = await realpath(faroDir).catch(() => faroDir);
+      if (faroWorktreeCreated) {
+        await run(
+          'git',
+          ['worktree', 'remove', '--force', faroDir],
+          faroCheckoutDir,
+        ).catch(() => {});
+      }
+      await rm(tempRoot, { recursive: true, force: true });
+      await run('git', ['worktree', 'prune'], faroCheckoutDir);
+      const worktrees = await run(
+        'git',
+        ['worktree', 'list', '--porcelain'],
+        faroCheckoutDir,
+      );
+      assert.ok(
+        !worktrees.stdout.includes(`worktree ${faroDir}\n`) &&
+          !worktrees.stdout.includes(`worktree ${canonicalFaroDir}\n`),
+        'temporary Faro worktree was not cleaned up',
+      );
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (cleanupError) {
+      console.error('Faro worktree cleanup failed:', cleanupError);
+      if (!primaryError) throw cleanupError;
+    }
   }
-  runtime.pairedDeltas = pairedDeltas(runtime.samples);
-} finally {
-  await browser.close();
-  await new Promise((resolveClose) => receiver.server.close(resolveClose));
 }
 
-const rrwebCommit = (
-  await run('git', ['rev-parse', 'HEAD'], repoRoot)
-).stdout.trim();
-const modeTotal = Object.fromEntries(
-  MODES.map((mode) => [mode, bundles[mode].total]),
-);
-const bundleDeltas = {
-  faroMinusVanilla: Object.fromEntries(
-    ['rawBytes', 'gzipBytes', 'brotliBytes'].map((key) => [
-      key,
-      modeTotal.faro[key] - modeTotal.vanilla[key],
-    ]),
-  ),
-  replayMinusFaro: Object.fromEntries(
-    ['rawBytes', 'gzipBytes', 'brotliBytes'].map((key) => [
-      key,
-      modeTotal['faro-replay'][key] - modeTotal.faro[key],
-    ]),
-  ),
-  replayMinusVanilla: Object.fromEntries(
-    ['rawBytes', 'gzipBytes', 'brotliBytes'].map((key) => [
-      key,
-      modeTotal['faro-replay'][key] - modeTotal.vanilla[key],
-    ]),
-  ),
-};
-const report = {
-  metadata: await collectMetadata(rrwebArtifacts, resolution, browser),
-  bundle: { sizes: modeTotal, deltas: bundleDeltas, details: bundles },
-  runtime,
-  limitations: [
-    'Enabled-versus-disabled configuration overhead at this revision is not a PR-versus-main regression comparison.',
-    'Navigation and workload timings include browser scheduling; they do not attribute wall-clock time to rrweb internals.',
-    'Three repetitions are for directional visibility only; no tail-performance claim or pass/fail performance threshold is made.',
-    'The Faro receiver is local and does not represent Cloud network latency or ingestion behavior.',
-  ],
-};
-report.metadata.rrwebCommit = rrwebCommit;
-await writeFile(
-  join(artifactDir, 'faro-benchmark.json'),
-  `${JSON.stringify(report, null, 2)}\n`,
-);
-await writeFile(join(artifactDir, 'faro-benchmark.md'), renderMarkdown(report));
-console.log(renderMarkdown(report));
+await main();

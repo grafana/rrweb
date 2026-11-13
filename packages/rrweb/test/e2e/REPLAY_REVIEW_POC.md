@@ -4,18 +4,26 @@ The PR workflow builds rrweb from the checked-out commit and runs a deterministi
 operations-console scenario in Chromium. The fixture has dashboard cards, a
 chart, a 600-row generated transaction table, filters, search, a transaction
 detail dialog, multiple navigation views, forms, and changing metrics. The seed
-(`1729`) fixes generated customer amounts and chart bars. Playwright navigates,
-searches, filters, opens and edits a transaction, changes several views, updates
-metrics, exports a report, and scrolls the page over about 21 seconds.
+(`1729`) fixes generated customer amounts and chart bars. Over about 80 seconds,
+Playwright cycles through navigation views, searches and filters transactions,
+edits transaction notes, toggles settings, exports reports, updates metrics, and
+scrolls the transaction table.
 
 rrweb events go to a mocked local `/collect` endpoint, then the test feeds them
 to the built rrweb `Replayer` in Chromium. It checks a full snapshot,
-incremental events, contiguous event delivery, expected final DOM state, and
-browser errors. CI uploads a WebM of the instrumented fixture interactions and
+incremental events, complete contiguous event delivery, a minimum 70-second
+recording duration, a mid-session nonzero scroll checkpoint, and final metrics,
+controls, and DOM state. It also checks browser and receiver errors. CI uploads a WebM of the instrumented fixture interactions and
 a PNG captured directly from the replay iframe, along with event payloads and a
 run summary, as a three-day workflow artifact. The video shows the site being
 exercised; the PNG shows the rrweb replay render. On failure, CI still uploads
-diagnostics and any available visual artifacts.
+diagnostics and any available visual artifacts. For PR branches in this
+repository, a separate job creates or updates one bot comment with the direct
+artifact link, commit, run link, test result, and retention period. It runs even
+when tests fail if artifacts were uploaded. That job has only pull request write
+permission and never checks out or executes PR code. Fork PRs skip comment
+posting because their token is read-only; artifacts remain available from the
+Actions run.
 
 Run locally after building rrweb:
 
@@ -34,7 +42,10 @@ The benchmark requires Faro Web SDK commit
 `c8e33b9f0dd211f63b43b55a4677b5378612a9b2`. It packs the five rrweb workspace
 packages from this checkout, overrides Faro's rrweb package resolutions with
 those tarballs, installs Faro's Yarn workspace dependencies, and verifies the
-resolved rrweb version and lockfile artifact. It does not publish packages.
+resolved package versions and exact local-tarball lock descriptors. The report
+records each tarball's integrity and the PR head SHA when running in CI. The
+benchmark uses a temporary detached Faro worktree and verifies that it is
+removed after the run. It does not publish packages.
 The CI workflow checks out the pinned Faro commit itself, so it does not rely
 on a developer's dirty Faro checkout.
 
