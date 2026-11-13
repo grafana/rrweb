@@ -263,6 +263,36 @@ describe('replayer', function () {
     );
   });
 
+  it('emits custom events in order when seeking synchronously', async () => {
+    const emitted = await page.evaluate(`
+      const { EventType, Replayer } = rrweb;
+      const customEvents = [
+        {
+          type: EventType.Custom,
+          data: { tag: 'first', payload: 1 },
+          timestamp: events[0].timestamp + 1100,
+        },
+        {
+          type: EventType.Custom,
+          data: { tag: 'second', payload: 2 },
+          timestamp: events[0].timestamp + 1200,
+        },
+      ];
+      const seekEvents = [...events, ...customEvents].sort(
+        (a, b) => a.timestamp - b.timestamp,
+      );
+      const replayer = new Replayer(seekEvents);
+      const emittedEvents = [];
+      replayer.on('custom-event', (event) => emittedEvents.push(event));
+      replayer.play(1500);
+      emittedEvents;
+    `);
+
+    expect(
+      emitted.map((event: { data: { tag: string } }) => event.data.tag),
+    ).toEqual(['first', 'second']);
+  });
+
   it('can play a second time in the future', async () => {
     const actionLength = await page.evaluate(`
       const { Replayer } = rrweb;
