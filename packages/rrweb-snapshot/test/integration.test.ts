@@ -428,6 +428,61 @@ iframe.contentDocument.querySelector('center').clientHeight
     }
   });
 
+  describe('blocked iframes', () => {
+    const countIframeLoads = async (
+      page: puppeteer.Page,
+      options: string,
+      className: string,
+    ): Promise<number> => {
+      await page.goto(`${serverURL}/html/iframe.html`, { waitUntil: 'load' });
+      await page.waitForSelector('iframe', { timeout: 1000 });
+      await waitForRAF(page);
+      await page.evaluate((name) => {
+        document.querySelector('iframe')!.className = name;
+      }, className);
+      await page.evaluate(`${code}
+        window.iframeLoads = 0;
+        rrwebSnapshot.snapshot(document, {
+          ...${options},
+          onIframeLoad: function() { window.iframeLoads++; }
+        });`);
+      await waitForRAF(page);
+      return (await page.evaluate('window.iframeLoads')) as number;
+    };
+
+    it('does not serialize blocked iframe documents', async () => {
+      const page = await browser.newPage();
+      try {
+        expect(
+          await countIframeLoads(
+            page,
+            "{ blockClass: 'rr-block' }",
+            'rr-block',
+          ),
+        ).toBe(0);
+        expect(
+          await countIframeLoads(
+            page,
+            "{ blockSelector: '.blocked-frame' }",
+            'blocked-frame',
+          ),
+        ).toBe(0);
+        expect(
+          await countIframeLoads(
+            page,
+            '{ blockClass: /rr-block/g }',
+            'rr-block',
+          ),
+        ).toBe(0);
+        expect(
+          await countIframeLoads(page, "{ blockClass: 'rr-block' }", 'other'),
+        ).toBe(1);
+      } finally {
+        await page.close();
+      }
+    });
+  });
+
   it('correctly saves blob:images offline', async () => {
     const page: puppeteer.Page = await browser.newPage();
 
