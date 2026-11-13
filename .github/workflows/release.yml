@@ -71,7 +71,7 @@ jobs:
 
       - name: Upgrade npm
         if: ${{ steps.release.outputs.prs_created == 'true' && steps.release-branch.outputs.branch != '' && steps.release-branch.outputs.branch != 'null' }}
-        run: npm install -g npm@11.12.1
+        run: npm install -g npm@11.21.0
 
       - name: Refresh package-lock.json
         id: refresh
@@ -127,7 +127,7 @@ jobs:
           package-manager-cache: false
 
       - name: Upgrade npm
-        run: npm install -g npm@11.12.1
+        run: npm install -g npm@11.21.0
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -199,7 +199,7 @@ jobs:
           package-manager-cache: false
 
       - name: Upgrade npm
-        run: npm install -g npm@11.12.1
+        run: npm install -g npm@11.21.0
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -218,22 +218,27 @@ jobs:
             name=$(node -e "process.stdout.write(require('./$pkg/package.json').name)")
             version=$(node -e "process.stdout.write(require('./$pkg/package.json').version)")
 
-            if npm view "$name@$version" version 2>/dev/null | grep -qF "$version"; then
-              echo "Skipping $name@$version — already published"
-              return 0
-            fi
-
-            local tag_flag=""
+            local -a tag_args=()
             if [[ "$version" == *-alpha* ]]; then
-              tag_flag="--tag alpha"
+              tag_args=(--tag alpha)
             elif [[ "$version" == *-beta* ]]; then
-              tag_flag="--tag beta"
+              tag_args=(--tag beta)
             elif [[ "$version" == *-grafana* ]]; then
-              tag_flag="--tag grafana"
+              tag_args=(--tag grafana)
             fi
 
-            echo "Publishing $name@$version..."
-            (cd "$pkg" && npm publish --provenance --access public $tag_flag)
+            if npm view "$name@$version" version 2>/dev/null | grep -qF "$version"; then
+              echo "Skipping publish for $name@$version — already published"
+            else
+              echo "Publishing $name@$version..."
+              (cd "$pkg" && npm publish --provenance --access public "${tag_args[@]}")
+            fi
+
+            if [[ "$version" == *-grafana* ]]; then
+              echo "Applying grafana and latest tags to $name@$version..."
+              npm dist-tag add "$name@$version" grafana
+              npm dist-tag add "$name@$version" latest
+            fi
           }
 
           failed=0
