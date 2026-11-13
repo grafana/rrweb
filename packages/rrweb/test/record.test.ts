@@ -837,6 +837,56 @@ describe('record', function (this: ISuite) {
     expect(autoplayMutations).toHaveLength(0);
   });
 
+  it('orders nested additions around ignored and blocked siblings', async () => {
+    await ctx.page.evaluate(() => {
+      const { record } = (window as unknown as IWindow).rrweb;
+      record({
+        emit: (window as unknown as IWindow).emit,
+        slimDOMOptions: { comment: true },
+      });
+    });
+    await waitForRAF(ctx.page);
+    await ctx.page.evaluate(() => {
+      const root = document.createElement('section');
+      const first = document.createElement('span');
+      const ignoredComment = document.createComment('ignored');
+      const second = document.createElement('span');
+      const blocked = document.createElement('div');
+      blocked.className = 'rr-block';
+      blocked.append(document.createElement('strong'));
+      first.textContent = 'first';
+      second.textContent = 'second';
+      root.append(first, ignoredComment, second, blocked);
+      document.body.append(root);
+    });
+    await waitForRAF(ctx.page);
+
+    const mutation = ctx.events.find(
+      (event) =>
+        event.type === EventType.IncrementalSnapshot &&
+        event.data.source === IncrementalSource.Mutation,
+    );
+    expect(mutation).toBeDefined();
+    if (!mutation || mutation.type !== EventType.IncrementalSnapshot) return;
+
+    const adds = mutation.data.adds;
+    const addedIds = new Set(adds.map(({ node }) => node.id));
+    const seenIds = new Set<number>();
+    for (const add of adds) {
+      if (addedIds.has(add.parentId)) {
+        expect(seenIds.has(add.parentId)).toBe(true);
+      }
+      if (add.nextId !== null) {
+        if (addedIds.has(add.nextId)) {
+          expect(seenIds.has(add.nextId)).toBe(true);
+        }
+      }
+      seenIds.add(add.node.id);
+    }
+    // The ignored comment and blocked element's child are excluded.
+    expect(adds).toHaveLength(6);
+  });
+
   describe('loading stylesheets', () => {
     let server: Server;
     let serverURL: string;

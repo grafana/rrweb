@@ -25,6 +25,9 @@
     "prepublish": "tsc -noEmit && vite build",
     "lint": "eslint src",
     "benchmark": "vitest run --maxConcurrency 1 --no-file-parallelism test/benchmark",
+    "benchmark:mutation": "vitest run --maxConcurrency 1 --no-file-parallelism test/benchmark/dom-mutation.test.ts",
+    "benchmark:mutation:firefox": "cross-env BROWSER=firefox npm run benchmark:mutation",
+    "benchmark:mutation:webkit": "cross-env BROWSER=webkit npm run benchmark:mutation",
     "test:webkit": "npm run build && vitest run --config vitest.config.webkit.ts"
   },
   "type": "module",
