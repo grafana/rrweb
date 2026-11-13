@@ -78,3 +78,9 @@ This feature aims to provide developers with more information about the bug scen
 The plugin API is designed to extend the function of rrweb without bump the size and complexity of rrweb's core part.
 
 [link](./plugin.md)
+
+### Annotations
+
+Record captions and timeline markers as annotation events.
+
+[link](./annotations.md)

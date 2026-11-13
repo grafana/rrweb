@@ -34,7 +34,7 @@ import styleDeclarationMissingRuleEvents from './events/style-declaration-missin
 import documentReplacementEvents from './events/document-replacement';
 import hoverInIframeShadowDom from './events/iframe-shadowdom-hover';
 import customElementDefineClass from './events/custom-element-define-class';
-import { ReplayerEvents } from '@grafana/rrweb-types';
+import { EventType, ReplayerEvents } from '@grafana/rrweb-types';
 
 interface ISuite {
   code: string;
@@ -87,6 +87,60 @@ describe('replayer', function () {
       endTime: events[events.length - 1].timestamp,
       totalTime: events[events.length - 1].timestamp - events[0].timestamp,
     });
+  });
+
+  it('emits annotation events while replaying', async () => {
+    const annotation = await page.evaluate(`
+      (async () => {
+        const { Replayer, ReplayerEvents, EventType } = rrweb;
+        const replayEvents = [...events];
+        const metaIndex = replayEvents.findIndex((event) => event.type === EventType.Meta);
+        replayEvents.splice(metaIndex + 1, 0, {
+          type: EventType.Annotation,
+          timestamp: replayEvents[metaIndex].timestamp,
+          data: { type: 'caption', text: 'Hello from replay' },
+        });
+        const replayer = new Replayer(replayEvents);
+        return await new Promise((resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error('Timed out waiting for annotation')),
+            5000,
+          );
+          replayer.on(ReplayerEvents.Annotation, (event) => {
+            clearTimeout(timeout);
+            replayer.pause();
+            resolve(event);
+          });
+          replayer.play(0);
+        });
+      })();
+    `);
+    expect(annotation).toMatchObject({
+      type: EventType.Annotation,
+      data: { type: 'caption', text: 'Hello from replay' },
+    });
+  });
+
+  it('does not emit annotation events while seeking past them', async () => {
+    const annotations = await page.evaluate(`
+      (() => {
+        const { Replayer, ReplayerEvents, EventType } = rrweb;
+        const replayEvents = [...events];
+        const metaIndex = replayEvents.findIndex((event) => event.type === EventType.Meta);
+        replayEvents.splice(metaIndex + 1, 0, {
+          type: EventType.Annotation,
+          timestamp: replayEvents[metaIndex].timestamp + 500,
+          data: { type: 'caption', text: 'Past caption' },
+        });
+        const replayer = new Replayer(replayEvents);
+        const seen = [];
+        replayer.on(ReplayerEvents.Annotation, (event) => seen.push(event));
+        replayer.play(2000);
+        replayer.pause();
+        return seen;
+      })();
+    `);
+    expect(annotations).toEqual([]);
   });
 
   it('creates a replay iframe with the supported sandbox policy', async () => {
