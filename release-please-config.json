@@ -3,13 +3,13 @@
   "release-type": "node",
   "include-v-in-tag": true,
   "include-component-in-tag": false,
-  "separate-pull-requests": false,
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": true,
   "versioning": "prerelease",
   "prerelease": true,
   "prerelease-type": "grafana",
-  "pull-request-header": "rrweb Release - ${version}",
+  "pull-request-header": "rrweb release notes",
+  "pull-request-title-pattern": "chore: release ${version}",
   "group-pull-request-title-pattern": "chore: release ${version}",
   "packages": {
     ".": {
