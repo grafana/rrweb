@@ -23,6 +23,7 @@ export class IframeManager {
   private mutationCb: mutationCallBack;
   private wrappedEmit: (e: eventWithoutTime, isCheckout?: boolean) => void;
   private loadListener?: (iframeEl: HTMLIFrameElement) => unknown;
+  private pageHideListener?: (iframeEl: HTMLIFrameElement) => unknown;
   private stylesheetManager: StylesheetManager;
   private recordCrossOriginIframes: boolean;
 
@@ -58,6 +59,10 @@ export class IframeManager {
     this.loadListener = cb;
   }
 
+  public addPageHideListener(cb: (iframeEl: HTMLIFrameElement) => unknown) {
+    this.pageHideListener = cb;
+  }
+
   public attachIframe(
     iframeEl: HTMLIFrameElement,
     childSn: serializedNodeWithId,
@@ -82,6 +87,12 @@ export class IframeManager {
         'message',
         this.handleMessage.bind(this),
       );
+
+    // contentWindow is a stable WindowProxy across navigation; keep its routing entry.
+    iframeEl.contentWindow?.addEventListener('pagehide', () => {
+      this.pageHideListener?.(iframeEl);
+      this.mirror.removeNodeFromMap(iframeEl.contentDocument!);
+    });
 
     this.loadListener?.(iframeEl);
 
