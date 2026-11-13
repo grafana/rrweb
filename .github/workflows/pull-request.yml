@@ -11,6 +11,8 @@ jobs:
   test:
     permissions:
       contents: read
+    outputs:
+      replay-artifact-url: ${{ steps.upload-replay.outputs.artifact-url }}
     name: Test
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -51,31 +53,6 @@ jobs:
       - name: Build
         run: npm run build:all
 
-      - name: Checkout pinned Faro Web SDK
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          repository: grafana/faro-web-sdk
-          ref: c8e33b9f0dd211f63b43b55a4677b5378612a9b2
-          path: faro-web-sdk
-          persist-credentials: false
-
-      - name: Record and replay review fixture
-        run: npm run test:replay-review -w @grafana/rrweb
-
-      - name: Run three-mode Faro benchmark
-        run: npm run test:faro-benchmark -w @grafana/rrweb
-        env:
-          FARO_WEB_SDK_PATH: faro-web-sdk
-
-      - name: Upload replay and benchmark artifacts
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: rrweb-replay-review
-          path: packages/rrweb/test-results/replay-review/
-          if-no-files-found: ignore
-          retention-days: 3
-
       - name: Lint
         run: npm run lint
 
@@ -87,3 +64,72 @@ jobs:
         env:
           PUPPETEER_HEADLESS: 'true'
           PUPPETEER_EXECUTABLE_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+
+      - name: Checkout pinned Faro Web SDK
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          repository: grafana/faro-web-sdk
+          ref: c8e33b9f0dd211f63b43b55a4677b5378612a9b2
+          path: faro-web-sdk
+          persist-credentials: false
+
+      - name: Record and replay review fixture
+        id: replay-review
+        run: npm run test:replay-review -w @grafana/rrweb
+        timeout-minutes: 10
+
+      - name: Run three-mode Faro benchmark
+        if: ${{ !cancelled() && steps.replay-review.outcome != 'skipped' }}
+        run: npm run test:faro-benchmark -w @grafana/rrweb
+        timeout-minutes: 15
+        env:
+          FARO_WEB_SDK_PATH: faro-web-sdk
+          RRWEB_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+      - name: Upload replay and benchmark artifacts
+        id: upload-replay
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rrweb-replay-review
+          path: packages/rrweb/test-results/replay-review/
+          if-no-files-found: ignore
+          retention-days: 3
+
+  replay-comment:
+    name: Link replay artifacts
+    needs: test
+    if: >-
+      ${{ always() && needs.test.outputs.replay-artifact-url != '' &&
+          github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Create or update replay artifact comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ARTIFACT_URL: ${{ needs.test.outputs.replay-artifact-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          body_file="$RUNNER_TEMP/replay-comment.md"
+          {
+            printf '%s\n' '<!-- rrweb-replay-artifacts -->' '### Replay review assets' ''
+            printf '[Download the replay review assets](%s)\n\n' "$ARTIFACT_URL"
+            printf 'Includes the fixture interaction video, replay iframe screenshot, captured events, and available Faro benchmark reports.\n\n'
+            printf 'Commit: %s · [Workflow run](%s) · Test job: %s\n\n' "$PR_HEAD_SHA" "$RUN_URL" "$TEST_RESULT"
+            printf 'Artifacts expire after three days. The video shows the instrumented fixture; the screenshot shows the rrweb replay.\n'
+          } > "$body_file"
+          jq -n --rawfile body "$body_file" '{body: $body}' > "$RUNNER_TEMP/replay-comment.json"
+          comment_id=$(gh api --paginate --slurp "repos/$GH_REPO/issues/$PR_NUMBER/comments" \
+            --jq '[.[][] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- rrweb-replay-artifacts -->")))][0].id // empty')
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/$GH_REPO/issues/comments/$comment_id" --input "$RUNNER_TEMP/replay-comment.json"
+          else
+            gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" --input "$RUNNER_TEMP/replay-comment.json"
+          fi

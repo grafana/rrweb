@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,10 +18,11 @@ await Promise.all(
   [
     'fixture-interaction.webm',
     'replay.webm',
-    'replay-final.png',
     'replay-iframe.png',
     'events.json',
     'summary.json',
+    'faro-benchmark.json',
+    'faro-benchmark.md',
   ].map((name) => rm(resolve(artifactDir, name), { force: true })),
 );
 
@@ -34,6 +35,9 @@ let recordingContext;
 let replayContext;
 let fixtureVideo;
 let runError;
+let emittedEventCount = 0;
+let recordingDurationMs = 0;
+let scrollCheckpointTimestamp = 0;
 
 try {
   recordingContext = await browser.newContext({
@@ -98,7 +102,7 @@ try {
     <main><div class="top"><div><h1>Service overview</h1><div class="muted">Monitor your workspace activity and health</div></div><button class="primary" id="export">Export report</button></div><p id="status" aria-live="polite">Ready · Last updated just now</p>
     <section class="cards"><article class="card">Gross volume<div class="metric" id="volume">$128,430</div><span class="positive">↗ 12.8% vs last month</span></article><article class="card">Successful payments<div class="metric" id="payments">2,481</div><span class="positive">↗ 8.2% vs last month</span></article><article class="card">Active customers<div class="metric">842</div><span class="positive">↗ 4.6% vs last month</span></article><article class="card">Disputes<div class="metric">0.08%</div><span class="positive">↓ 0.02% vs last month</span></article></section>
     <section class="grid"><article class="panel"><strong>Volume over time</strong><span class="muted"> · Last 7 days</span><div class="bars" aria-label="Volume chart"></div></article><article class="panel"><strong>Recent activity</strong><p>✓ Payout completed · 2 minutes ago</p><p>↗ New customer · 18 minutes ago</p><p>✓ Invoice paid · 34 minutes ago</p><p>◷ Review requested · 1 hour ago</p></article></section><section id="workspace-panel" class="panel" style="margin-top:14px"><strong>Payment activity</strong><p class="muted">Your latest payment activity is up to date.</p></section>
-    <div class="toolbar"><strong>Recent transactions</strong><span class="muted">600 records</span><span style="flex:1"></span><input id="search" placeholder="Search transactions" aria-label="Search transactions"><select id="filter" aria-label="Filter status"><option>All statuses</option><option>Successful</option><option>Pending</option><option>Refunded</option></select></div><div style="overflow:auto;max-height:310px"><table><thead><tr><th>Customer</th><th>Date</th><th>Amount</th><th>Status</th><th>Reference</th></tr></thead><tbody id="rows"></tbody></table></div></main></div>
+    <div class="toolbar"><strong>Recent transactions</strong><span class="muted">600 records</span><span style="flex:1"></span><input id="search" placeholder="Search transactions" aria-label="Search transactions"><select id="filter" aria-label="Filter status"><option>All statuses</option><option>Successful</option><option>Pending</option><option>Refunded</option></select></div><div id="transaction-scroll" style="overflow:auto;max-height:310px"><table><thead><tr><th>Customer</th><th>Date</th><th>Amount</th><th>Status</th><th>Reference</th></tr></thead><tbody id="rows"></tbody></table></div></main></div>
     <div id="detail" role="dialog" aria-modal="true"><div class="dialog"><div class="top"><h2>Transaction details</h2><button id="close">✕</button></div><p id="detail-copy"></p><label for="note">Internal note</label><p><input id="note" style="width:100%" placeholder="Add a note for your team"></p><button class="primary" id="save-note">Save note</button></div></div></body></html>
   `);
   await recordingPage.evaluate(() => {
@@ -240,36 +244,116 @@ try {
   await pause(500);
   await recordingPage.locator('#note').fill('Follow up after settlement');
   await recordingPage.locator('#save-note').click();
-  for (let i = 0; i < 12; i++) {
+  await recordingPage.locator('#transaction-scroll').evaluate((scroller) => {
+    scroller.scrollTop = 0;
+  });
+  for (let i = 0; i < 48; i++) {
     await pause(1_500);
-    await recordingPage
-      .locator('nav button')
-      .nth((i % 4) + 1)
-      .click();
+    const navigationIndex = (i % 4) + 1;
+    await recordingPage.locator('nav button').nth(navigationIndex).click();
     await recordingPage.locator('#volume').evaluate((el, n) => {
       el.textContent = `$${(128430 + n * 137).toLocaleString()}`;
     }, i);
     await recordingPage.locator('#payments').evaluate((el, n) => {
       el.textContent = (2481 + n * 3).toLocaleString();
     }, i);
-    await recordingPage.locator('#export').click();
-    await recordingPage.locator('main').evaluate((main, n) => {
-      main.scrollTop = n % 2 ? 0 : main.scrollHeight;
-    }, i);
+
+    switch (i % 8) {
+      case 0:
+        await recordingPage.locator('#search').fill('Avery');
+        await pause(200);
+        await recordingPage.locator('#search').fill('');
+        break;
+      case 1:
+        await recordingPage.locator('#filter').selectOption('Pending');
+        await pause(200);
+        await recordingPage.locator('#filter').selectOption('All statuses');
+        break;
+      case 2:
+        await recordingPage.locator('#rows tr').nth(18).click();
+        await recordingPage
+          .locator('#note')
+          .fill(`Reviewed by ops · batch ${i}`);
+        await recordingPage.locator('#save-note').click();
+        break;
+      case 3:
+        await recordingPage.locator('nav button').nth(4).click();
+        await recordingPage.locator('#workspace-panel input').first().click();
+        break;
+      case 4:
+        await recordingPage.locator('#export').click();
+        break;
+      case 5:
+        await recordingPage.locator('nav button').nth(2).click();
+        await recordingPage.locator('#workspace-panel button').click();
+        break;
+      case 6: {
+        const scrollState = await recordingPage
+          .locator('#transaction-scroll')
+          .evaluate((scroller, iteration) => {
+            if (iteration === 38 || scroller.scrollTop === 0) {
+              scroller.scrollTop = scroller.scrollHeight;
+            } else {
+              scroller.scrollTop = 0;
+            }
+            return {
+              scrollTop: scroller.scrollTop,
+              scrollHeight: scroller.scrollHeight,
+              clientHeight: scroller.clientHeight,
+            };
+          }, i);
+        if (i === 38) {
+          assert.ok(
+            scrollState.scrollTop > 0,
+            `checkpoint should be scrolled: ${JSON.stringify(scrollState)}`,
+          );
+          await pause(500);
+          scrollCheckpointTimestamp = await recordingPage.evaluate(() =>
+            Date.now(),
+          );
+        }
+        break;
+      }
+      case 7:
+        await recordingPage.locator('nav button').nth(3).click();
+        await recordingPage.locator('#export').click();
+        break;
+    }
   }
   await recordingPage.locator('nav button').first().click();
   await recordingPage.locator('#rows tr').nth(2).click();
   await recordingPage.locator('#close').click();
+  await recordingPage.evaluate(() => {
+    window.scrollTo(0, 0);
+    document.querySelector('#transaction-scroll').scrollTop = 0;
+  });
   await pause(600);
   await recordingPage.evaluate(
     () => new Promise((resolve) => requestAnimationFrame(resolve)),
   );
   await recordingPage.evaluate(() => window.__rrwebStop());
+  emittedEventCount = await recordingPage.evaluate(() =>
+    window.__rrwebEventCount(),
+  );
   await recordingPage.evaluate(() => window.__rrwebFlush());
   await recordingContext.close();
   recordingContext = undefined;
 
   capturedPayloads.sort((left, right) => left.sequence - right.sequence);
+  assert.equal(
+    capturedPayloads.length,
+    emittedEventCount,
+    'receiver should capture every event emitted by rrweb',
+  );
+  recordingDurationMs =
+    capturedPayloads.length > 1
+      ? capturedPayloads.at(-1).event.timestamp -
+        capturedPayloads[0].event.timestamp
+      : 0;
+  assert.ok(
+    recordingDurationMs >= 70_000,
+    `expected an interaction recording of at least 70 seconds, got ${recordingDurationMs} ms`,
+  );
   assert.deepEqual(
     capturedPayloads.map((payload) => payload.sequence),
     capturedPayloads.map((_, index) => index),
@@ -342,14 +426,21 @@ try {
   });
   await replayPage.goto('http://fixture.test/');
   await replayPage.addScriptTag({ path: bundlePath });
-  await replayPage.evaluate((events) => {
-    const replayer = new window.rrweb.Replayer(events, {
-      root: document.querySelector('#player'),
-      showWarning: false,
-    });
-    window.__replayer = replayer;
-    replayer.play(0);
-  }, capturedEvents);
+  const scrollCheckpointOffset =
+    scrollCheckpointTimestamp - capturedEvents[0].timestamp;
+  await replayPage.evaluate(
+    ({ events, scrollOffset }) => {
+      const replayer = new window.rrweb.Replayer(events, {
+        root: document.querySelector('#player'),
+        showWarning: false,
+      });
+      window.__replayer = replayer;
+      window.__lastReplayTime = events.at(-1).timestamp - events[0].timestamp;
+      window.__scrollCheckpointOffset = scrollOffset;
+      replayer.play(0);
+    },
+    { events: capturedEvents, scrollOffset: scrollCheckpointOffset },
+  );
   await replayPage.waitForFunction(
     () =>
       window.__replayer?.iframe.contentDocument
@@ -357,6 +448,20 @@ try {
         ?.textContent.startsWith('Ready'),
     null,
     { timeout: 10_000 },
+  );
+  await replayPage.evaluate(() =>
+    window.__replayer.pause(window.__scrollCheckpointOffset),
+  );
+  await replayPage.waitForFunction(
+    () =>
+      window.__replayer.iframe.contentDocument.querySelector(
+        '#transaction-scroll',
+      )?.scrollTop > 0,
+    null,
+    { timeout: 10_000 },
+  );
+  await replayPage.evaluate(() =>
+    window.__replayer.pause(window.__lastReplayTime),
   );
   await replayPage.waitForFunction(
     () => {
@@ -368,13 +473,30 @@ try {
         replayDocument.querySelector('#detail')?.classList.contains('open') ===
           false &&
         replayDocument.querySelector('#rows tr td:last-child')?.textContent ===
-          'NS-40000'
+          'NS-40000' &&
+        replayDocument.querySelector('#volume')?.textContent === '$134,869' &&
+        replayDocument.querySelector('#payments')?.textContent === '2,622' &&
+        replayDocument.querySelector('#search')?.value === '' &&
+        replayDocument.querySelector('#filter')?.value === 'All statuses' &&
+        replayDocument.querySelector('#note')?.value ===
+          'Reviewed by ops · batch 42' &&
+        replayDocument.querySelector('h1')?.textContent ===
+          'Service overview' &&
+        replayDocument.querySelector('#workspace-panel strong')?.textContent ===
+          'Payment activity' &&
+        replayDocument.querySelectorAll('#rows tr[hidden]').length === 0 &&
+        replayDocument.scrollingElement?.scrollTop === 0 &&
+        replayDocument.querySelector('#transaction-scroll')?.scrollTop === 0
       );
     },
     null,
     { timeout: 30_000 },
   );
   await replayPage.waitForTimeout(800);
+  await replayPage.locator('iframe').evaluate((iframe) => {
+    iframe.contentDocument.scrollingElement.scrollTop = 0;
+    iframe.contentDocument.querySelector('#transaction-scroll').scrollTop = 0;
+  });
   await replayPage.locator('iframe').screenshot({
     path: resolve(artifactDir, 'replay-iframe.png'),
   });
@@ -416,10 +538,8 @@ try {
   if (!runError && !videoSaved) {
     runError = new Error('Fixture interaction video was not saved');
   }
-  await writeFile(
-    resolve(artifactDir, 'events.json'),
-    JSON.stringify(capturedPayloads, null, 2),
-  );
+  const eventsJson = `${JSON.stringify(capturedPayloads, null, 2)}\n`;
+  await writeFile(resolve(artifactDir, 'events.json'), eventsJson);
   await writeFile(
     resolve(artifactDir, 'summary.json'),
     JSON.stringify(
@@ -430,29 +550,28 @@ try {
         generatedTransactionRows: 600,
         status: runError ? 'failed' : 'passed',
         eventCount: capturedPayloads.length,
-        eventBytes: Buffer.byteLength(JSON.stringify(capturedPayloads)),
-        recordingDurationMs:
-          capturedPayloads.length > 1
-            ? capturedPayloads.at(-1).event.timestamp -
-              capturedPayloads[0].event.timestamp
-            : 0,
+        eventBytes: Buffer.byteLength(eventsJson),
+        recordingDurationMs,
+        scrollCheckpointOffsetMs:
+          scrollCheckpointTimestamp && capturedPayloads.length
+            ? scrollCheckpointTimestamp - capturedPayloads[0].event.timestamp
+            : undefined,
         browserErrors,
         receiverErrors,
         error: runError instanceof Error ? runError.message : undefined,
         video: videoSaved ? 'fixture-interaction.webm' : undefined,
         videoContent:
           'instrumented fixture interactions; replay state is verified separately',
-        replayScreenshot: 'replay-iframe.png',
+        replayScreenshot: (await stat(
+          join(artifactDir, 'replay-iframe.png'),
+        ).catch(() => null))
+          ? 'replay-iframe.png'
+          : undefined,
         videoBytes: videoSaved ? (await stat(videoPath)).size : undefined,
       },
       null,
       2,
     ),
-  );
-  await Promise.all(
-    (await readdir(artifactDir))
-      .filter((name) => /^page@.+\.webm$/.test(name))
-      .map((name) => rm(resolve(artifactDir, name), { force: true })),
   );
   await rm(videoTempDir, { recursive: true, force: true });
   if (runError && !process.exitCode) process.exitCode = 1;
