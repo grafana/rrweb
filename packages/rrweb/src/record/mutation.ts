@@ -19,6 +19,7 @@ import type {
   removedNodeMutation,
   addedNodeMutation,
   Optional,
+  serializedNodeWithId,
 } from '@grafana/rrweb-types';
 import {
   isBlocked,
@@ -33,6 +34,7 @@ import {
   closestElementOfNode,
 } from '../utils';
 import dom from '@grafana/rrweb-utils';
+import { bindErrorHandlerContext } from './error-handler';
 
 type DoubleLinkedListNode = {
   previous: DoubleLinkedListNode | null;
@@ -343,13 +345,19 @@ export default class MutationBuffer {
             this.shadowDomManager.addShadowRoot(dom.shadowRoot(n)!, this.doc);
           }
         },
-        onIframeLoad: (iframe, childSn) => {
-          this.iframeManager.attachIframe(iframe, childSn);
-          this.shadowDomManager.observeAttachShadow(iframe);
-        },
-        onStylesheetLoad: (link, childSn) => {
-          this.stylesheetManager.attachLinkElement(link, childSn);
-        },
+        // The two load callbacks run later, from a browser event, so bind
+        // them to the recorder this buffer belongs to.
+        onIframeLoad: bindErrorHandlerContext(
+          (iframe: HTMLIFrameElement, childSn: serializedNodeWithId) => {
+            this.iframeManager.attachIframe(iframe, childSn);
+            this.shadowDomManager.observeAttachShadow(iframe);
+          },
+        ),
+        onStylesheetLoad: bindErrorHandlerContext(
+          (link: HTMLLinkElement, childSn: serializedNodeWithId) => {
+            this.stylesheetManager.attachLinkElement(link, childSn);
+          },
+        ),
         cssCaptured,
       });
       if (sn) {

@@ -11,6 +11,16 @@ import type {
 } from '@grafana/rrweb-types';
 import type { StylesheetManager } from './stylesheet-manager';
 
+function cloneEvent(event: eventWithTime): eventWithTime {
+  try {
+    return typeof structuredClone === 'function'
+      ? structuredClone(event)
+      : (JSON.parse(JSON.stringify(event)) as eventWithTime);
+  } catch {
+    return event;
+  }
+}
+
 export class IframeManager {
   private iframes: WeakMap<HTMLIFrameElement, true> = new WeakMap();
   private crossOriginIframeMap: WeakMap<MessageEventSource, HTMLIFrameElement> =
@@ -25,6 +35,12 @@ export class IframeManager {
   private loadListener?: (iframeEl: HTMLIFrameElement) => unknown;
   private stylesheetManager: StylesheetManager;
   private recordCrossOriginIframes: boolean;
+  // One listener for every window this manager listens on, so that a window
+  // is never listened on twice and the listener can be removed.
+  private messageListener = (
+    message: MessageEvent | CrossOriginIframeMessageEvent,
+  ) => this.handleMessage(message);
+  private destroyed = false;
 
   constructor(options: {
     mirror: Mirror;
@@ -44,8 +60,17 @@ export class IframeManager {
     );
     this.mirror = options.mirror;
     if (this.recordCrossOriginIframes) {
-      window.addEventListener('message', this.handleMessage.bind(this));
+      window.addEventListener('message', this.messageListener);
     }
+  }
+
+  /**
+   * Stops handling messages from cross-origin iframes. Call it when the
+   * recorder stops.
+   */
+  public destroy() {
+    this.destroyed = true;
+    window.removeEventListener('message', this.messageListener);
   }
 
   public addIframe(iframeEl: HTMLIFrameElement) {
@@ -78,10 +103,7 @@ export class IframeManager {
 
     // Receive messages (events) coming from cross-origin iframes that are nested in this same-origin iframe.
     if (this.recordCrossOriginIframes)
-      iframeEl.contentWindow?.addEventListener(
-        'message',
-        this.handleMessage.bind(this),
-      );
+      iframeEl.contentWindow?.addEventListener('message', this.messageListener);
 
     this.loadListener?.(iframeEl);
 
@@ -96,6 +118,10 @@ export class IframeManager {
       );
   }
   private handleMessage(message: MessageEvent | CrossOriginIframeMessageEvent) {
+    if (this.destroyed) {
+      // Listeners on the windows of same-origin iframes are not removed.
+      return;
+    }
     const crossOriginMessageEvent = message as CrossOriginIframeMessageEvent;
     if (
       crossOriginMessageEvent.data.type !== '@grafana/rrweb' ||
@@ -110,9 +136,12 @@ export class IframeManager {
     const iframeEl = this.crossOriginIframeMap.get(message.source);
     if (!iframeEl) return;
 
+    // The event is rewritten in place below, and every recorder on this page
+    // receives the same message object. Work on a copy, so that one recorder
+    // does not rewrite what another recorder emits.
     const transformedEvent = this.transformCrossOriginEvent(
       iframeEl,
-      crossOriginMessageEvent.data.event,
+      cloneEvent(crossOriginMessageEvent.data.event),
     );
 
     if (transformedEvent)

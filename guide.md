@@ -199,6 +199,17 @@ function save() {
 setInterval(save, 10 * 1000);
 ```
 
+#### Several recorders on one page
+
+`record()` can be called more than once, for example by separate parts of a
+micro-frontend application. Each call starts an independent recorder with its
+own options and its own event stream, and returns its own stop function.
+Recorders can stop in any order.
+
+Every recorder does its own work, so the cost of recording grows with the
+number of recorders. `record.addCustomEvent`, `record.takeFullSnapshot`,
+`record.freezePage` and `record.mirror` act on the recorder that started last.
+
 #### Options
 
 The `record` function accepts the following options.

@@ -52,9 +52,11 @@ import type {
 } from '@grafana/rrweb-types';
 import MutationBuffer from './mutation';
 import { callbackWrapper } from './error-handler';
-import dom, { mutationObserverCtor } from '@grafana/rrweb-utils';
-
-export const mutationBuffers: MutationBuffer[] = [];
+import dom, {
+  mutationObserverCtor,
+  trackPatch,
+  trackPatchWith,
+} from '@grafana/rrweb-utils';
 
 // Event.path is non-standard and used in some older browsers
 type NonStandardEvent = Omit<Event, 'composedPath'> & {
@@ -83,7 +85,7 @@ export function initMutationObserver(
   rootEl: Node,
 ): [MutationObserver, () => void] {
   const mutationBuffer = new MutationBuffer();
-  mutationBuffers.push(mutationBuffer);
+  options.mutationBuffers.push(mutationBuffer);
   // see mutation.ts for details
   mutationBuffer.init(options);
   const [ObserverCtor, iframeCleanup] = mutationObserverCtor();
@@ -210,6 +212,9 @@ function initMouseInteractionObserver({
 
   const handlers: listenerHandler[] = [];
   let currentPointerType: PointerTypes | null = null;
+  // Wrapped once, here: the event handlers below are not wrapped callbacks,
+  // so wrapping inside them could pick another recorder's error handler.
+  const wrappedMouseInteractionCb = callbackWrapper(mouseInteractionCb);
   const getHandler = (eventKey: keyof typeof MouseInteractions) => {
     return (event: MouseEvent | TouchEvent | PointerEvent) => {
       const target = getEventTarget(event) as Node;
@@ -267,7 +272,7 @@ function initMouseInteractionObserver({
       }
       const id = mirror.getId(target);
       const { clientX, clientY } = e;
-      callbackWrapper(mouseInteractionCb)({
+      wrappedMouseInteractionCb({
         type: MouseInteractions[thisEventKey],
         id,
         x: clientX,
@@ -378,7 +383,6 @@ function initViewportResizeObserver(
 }
 
 export const INPUT_TAGS = ['INPUT', 'TEXTAREA', 'SELECT'];
-const lastInputValueMap: WeakMap<EventTarget, inputValue> = new WeakMap();
 function initInputObserver({
   inputCb,
   doc,
@@ -391,6 +395,10 @@ function initInputObserver({
   maskInputFn,
   sampling,
   userTriggeredOnInput,
+  // One map per recorder: a second recorder must not skip an input because
+  // the first recorder already saw it. It is shared by all observers of one
+  // recorder, because a recorder can observe a document more than once.
+  lastInputValueMap,
 }: observerParam): listenerHandler {
   function eventHandler(event: Event) {
     let target = getEventTarget(event) as HTMLElement | null;
@@ -479,8 +487,11 @@ function initInputObserver({
     }
   }
   const events = sampling.input === 'last' ? ['change'] : ['input', 'change'];
+  // Wrapped once, here, so that the hooked setters below report to this
+  // recorder's error handler however they are reached.
+  const wrappedEventHandler = callbackWrapper(eventHandler);
   const handlers: Array<listenerHandler | hookResetter> = events.map(
-    (eventName) => on(eventName, callbackWrapper(eventHandler), doc),
+    (eventName) => on(eventName, wrappedEventHandler, doc),
   );
   const currentWindow = doc.defaultView;
   if (!currentWindow) {
@@ -510,7 +521,7 @@ function initInputObserver({
           {
             set() {
               // mock to a normal event
-              callbackWrapper(eventHandler)({
+              wrappedEventHandler({
                 target: this as EventTarget,
                 isTrusted: false, // userTriggered to false as this could well be programmatic
               } as Event);
@@ -628,8 +639,15 @@ function initStyleSheetObserver(
       },
     ),
   });
+  const restoreInsertRule = trackPatch(
+    win.CSSStyleSheet.prototype,
+    'insertRule',
+    insertRule,
+  );
 
   // Support for deprecated addRule method
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const addRule = win.CSSStyleSheet.prototype.addRule;
   win.CSSStyleSheet.prototype.addRule = function (
     this: CSSStyleSheet,
     selector: string,
@@ -639,6 +657,12 @@ function initStyleSheetObserver(
     const rule = `${selector} { ${styleBlock} }`;
     return win.CSSStyleSheet.prototype.insertRule.apply(this, [rule, index]);
   };
+  // The replacement keeps everything this observer uses alive, so it is
+  // removed on stop like the other patches.
+  const restoreAddRule =
+    typeof addRule === 'function'
+      ? trackPatch(win.CSSStyleSheet.prototype, 'addRule', addRule)
+      : undefined;
 
   // eslint-disable-next-line @typescript-eslint/unbound-method
   const deleteRule = win.CSSStyleSheet.prototype.deleteRule;
@@ -668,16 +692,28 @@ function initStyleSheetObserver(
       },
     ),
   });
+  const restoreDeleteRule = trackPatch(
+    win.CSSStyleSheet.prototype,
+    'deleteRule',
+    deleteRule,
+  );
 
   // Support for deprecated removeRule method
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const removeRule = win.CSSStyleSheet.prototype.removeRule;
   win.CSSStyleSheet.prototype.removeRule = function (
     this: CSSStyleSheet,
     index: number,
   ) {
     return win.CSSStyleSheet.prototype.deleteRule.apply(this, [index]);
   };
+  const restoreRemoveRule =
+    typeof removeRule === 'function'
+      ? trackPatch(win.CSSStyleSheet.prototype, 'removeRule', removeRule)
+      : undefined;
 
   let replace: (text: string) => Promise<CSSStyleSheet>;
+  let restoreReplace: (() => void) | undefined;
 
   if (win.CSSStyleSheet.prototype.replace) {
     // eslint-disable-next-line @typescript-eslint/unbound-method
@@ -708,9 +744,15 @@ function initStyleSheetObserver(
         },
       ),
     });
+    restoreReplace = trackPatch(
+      win.CSSStyleSheet.prototype,
+      'replace',
+      replace,
+    );
   }
 
   let replaceSync: (text: string) => void;
+  let restoreReplaceSync: (() => void) | undefined;
   if (win.CSSStyleSheet.prototype.replaceSync) {
     // eslint-disable-next-line @typescript-eslint/unbound-method
     replaceSync = win.CSSStyleSheet.prototype.replaceSync;
@@ -740,6 +782,11 @@ function initStyleSheetObserver(
         },
       ),
     });
+    restoreReplaceSync = trackPatch(
+      win.CSSStyleSheet.prototype,
+      'replaceSync',
+      replaceSync,
+    );
   }
 
   const supportedNestedCSSRuleTypes: {
@@ -769,6 +816,7 @@ function initStyleSheetObserver(
       deleteRule: (index: number) => void;
     };
   } = {};
+  const restoreNestedRules: Array<() => void> = [];
 
   Object.entries(supportedNestedCSSRuleTypes).forEach(([typeKey, type]) => {
     unmodifiedFunctions[typeKey] = {
@@ -847,17 +895,31 @@ function initStyleSheetObserver(
         ),
       },
     );
+
+    restoreNestedRules.push(
+      trackPatch(
+        type.prototype,
+        'insertRule',
+        unmodifiedFunctions[typeKey].insertRule,
+      ),
+      trackPatch(
+        type.prototype,
+        'deleteRule',
+        unmodifiedFunctions[typeKey].deleteRule,
+      ),
+    );
   });
 
+  // Another recorder can have patched these methods after this one, so each
+  // patch is removed through `trackPatch` instead of being overwritten.
   return callbackWrapper(() => {
-    win.CSSStyleSheet.prototype.insertRule = insertRule;
-    win.CSSStyleSheet.prototype.deleteRule = deleteRule;
-    replace && (win.CSSStyleSheet.prototype.replace = replace);
-    replaceSync && (win.CSSStyleSheet.prototype.replaceSync = replaceSync);
-    Object.entries(supportedNestedCSSRuleTypes).forEach(([typeKey, type]) => {
-      type.prototype.insertRule = unmodifiedFunctions[typeKey].insertRule;
-      type.prototype.deleteRule = unmodifiedFunctions[typeKey].deleteRule;
-    });
+    restoreInsertRule();
+    restoreAddRule?.();
+    restoreDeleteRule();
+    restoreRemoveRule?.();
+    restoreReplace?.();
+    restoreReplaceSync?.();
+    restoreNestedRules.forEach((restore) => restore());
   });
 }
 
@@ -894,16 +956,40 @@ export function initAdoptedStyleSheetObserver(
       //
     };
 
+  if (stylesheetManager.adoptedStyleSheetHosts.has(host)) {
+    // This recorder observes the host already.
+    return () => {
+      //
+    };
+  }
+  stylesheetManager.adoptedStyleSheetHosts.add(host);
+
+  // Another recorder can have patched this host already. Chain onto its patch,
+  // so that every recorder sees the change.
+  const ownPropertyDescriptor = Object.getOwnPropertyDescriptor(
+    host,
+    'adoptedStyleSheets',
+  );
+  const previousPropertyDescriptor =
+    ownPropertyDescriptor &&
+    (ownPropertyDescriptor.get || ownPropertyDescriptor.set)
+      ? ownPropertyDescriptor
+      : originalPropertyDescriptor;
+
+  // The patch can stay installed after it was given up, while another
+  // recorder's patch sits on top of it. It must do nothing from then on.
+  let active = true;
+
   // Patch adoptedStyleSheets by overriding the original one.
-  Object.defineProperty(host, 'adoptedStyleSheets', {
+  const patchedPropertyDescriptor: PropertyDescriptor = {
     configurable: originalPropertyDescriptor.configurable,
     enumerable: originalPropertyDescriptor.enumerable,
     get(): CSSStyleSheet[] {
-      return originalPropertyDescriptor.get?.call(this) as CSSStyleSheet[];
+      return previousPropertyDescriptor.get?.call(this) as CSSStyleSheet[];
     },
     set(sheets: CSSStyleSheet[]) {
-      const result = originalPropertyDescriptor.set?.call(this, sheets);
-      if (hostId !== null && hostId !== -1) {
+      const result = previousPropertyDescriptor.set?.call(this, sheets);
+      if (active && hostId !== null && hostId !== -1) {
         try {
           stylesheetManager.adoptStyleSheets(sheets, hostId);
         } catch (e) {
@@ -912,17 +998,33 @@ export function initAdoptedStyleSheetObserver(
       }
       return result;
     },
-  });
+  };
+  Object.defineProperty(host, 'adoptedStyleSheets', patchedPropertyDescriptor);
 
-  return callbackWrapper(() => {
-    Object.defineProperty(host, 'adoptedStyleSheets', {
+  const restore = trackPatchWith<PropertyDescriptor>(
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    patchedPropertyDescriptor.set,
+    {
       configurable: originalPropertyDescriptor.configurable,
       enumerable: originalPropertyDescriptor.enumerable,
       // eslint-disable-next-line @typescript-eslint/unbound-method
-      get: originalPropertyDescriptor.get,
+      get: previousPropertyDescriptor.get,
       // eslint-disable-next-line @typescript-eslint/unbound-method
-      set: originalPropertyDescriptor.set,
-    });
+      set: previousPropertyDescriptor.set,
+    },
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    () => Object.getOwnPropertyDescriptor(host, 'adoptedStyleSheets')?.set,
+    (descriptor) => {
+      Object.defineProperty(host, 'adoptedStyleSheets', descriptor);
+    },
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    (descriptor) => descriptor.set,
+  );
+
+  return callbackWrapper(() => {
+    active = false;
+    stylesheetManager.adoptedStyleSheetHosts.delete(host);
+    restore();
   });
 }
 
@@ -973,6 +1075,12 @@ function initStyleDeclarationObserver(
     ),
   });
 
+  const restoreSetProperty = trackPatch(
+    win.CSSStyleDeclaration.prototype,
+    'setProperty',
+    setProperty,
+  );
+
   // eslint-disable-next-line @typescript-eslint/unbound-method
   const removeProperty = win.CSSStyleDeclaration.prototype.removeProperty;
   win.CSSStyleDeclaration.prototype.removeProperty = new Proxy(removeProperty, {
@@ -1009,9 +1117,15 @@ function initStyleDeclarationObserver(
     ),
   });
 
+  const restoreRemoveProperty = trackPatch(
+    win.CSSStyleDeclaration.prototype,
+    'removeProperty',
+    removeProperty,
+  );
+
   return callbackWrapper(() => {
-    win.CSSStyleDeclaration.prototype.setProperty = setProperty;
-    win.CSSStyleDeclaration.prototype.removeProperty = removeProperty;
+    restoreSetProperty();
+    restoreRemoveProperty();
   });
 }
 
@@ -1090,30 +1204,31 @@ function initFontObserver({ fontCb, doc }: observerParam): listenerHandler {
     });
     return fontFace;
   } as unknown as typeof FontFace;
+  const restoreFontFace = trackPatch(win, 'FontFace', originalFontFace);
+
+  // Wrapped once, here: the page calls the patched method below, so wrapping
+  // inside it could pick another recorder's error handler.
+  const reportFont = callbackWrapper((fontFace: FontFace) => {
+    const p = fontMap.get(fontFace);
+    if (p) {
+      fontCb(p);
+      fontMap.delete(fontFace);
+    }
+  });
 
   const restoreHandler = patch(
     doc.fonts,
     'add',
     function (original: (font: FontFace) => void) {
       return function (this: FontFaceSet, fontFace: FontFace) {
-        setTimeout(
-          callbackWrapper(() => {
-            const p = fontMap.get(fontFace);
-            if (p) {
-              fontCb(p);
-              fontMap.delete(fontFace);
-            }
-          }),
-          0,
-        );
+        setTimeout(() => reportFont(fontFace), 0);
         return original.apply(this, [fontFace]);
       };
     },
+    { inertAfterRestore: true },
   );
 
-  handlers.push(() => {
-    win.FontFace = originalFontFace;
-  });
+  handlers.push(restoreFontFace);
   handlers.push(restoreHandler);
 
   return callbackWrapper(() => {
@@ -1196,6 +1311,7 @@ function initCustomElementObserver({
         return original.apply(this, [name, constructor, options]);
       };
     },
+    { inertAfterRestore: true },
   );
   return restoreHandler;
 }
@@ -1353,7 +1469,7 @@ export function initObservers(
   }
 
   return callbackWrapper(() => {
-    mutationBuffers.forEach((b) => b.reset());
+    o.mutationBuffers.forEach((b) => b.reset());
     mutationObserver?.disconnect();
     cleanupMutationIframe();
     mousemoveHandler();

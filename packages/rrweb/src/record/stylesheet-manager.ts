@@ -14,6 +14,10 @@ export class StylesheetManager {
   private mutationCb: mutationCallBack;
   private adoptedStyleSheetCb: adoptedStyleSheetCallback;
   public styleMirror = new StyleSheetMirror();
+  // Documents and shadow roots whose `adoptedStyleSheets` this recorder
+  // already observes. A recorder can be asked to observe a host again, for
+  // example an iframe document after every full snapshot.
+  public adoptedStyleSheetHosts = new WeakSet<Document | ShadowRoot>();
 
   constructor(options: {
     mutationCb: mutationCallBack;

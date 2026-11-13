@@ -2,9 +2,11 @@ import {
   snapshot,
   slimDOMDefaults,
   type MaskInputOptions,
+  type Mirror,
   createMirror,
 } from '@grafana/rrweb-snapshot';
-import { initObservers, mutationBuffers } from './observer';
+import { initObservers } from './observer';
+import type MutationBuffer from './mutation';
 import {
   on,
   getWindowWidth,
@@ -27,6 +29,8 @@ import {
   type scrollCallback,
   type canvasMutationParam,
   type adoptedStyleSheetParam,
+  type inputValue,
+  type serializedNodeWithId,
 } from '@grafana/rrweb-types';
 import type { CrossOriginIframeMessageEventContent } from '../types';
 import { IframeManager } from './iframe-manager';
@@ -35,17 +39,34 @@ import { CanvasManager } from './observers/canvas/canvas-manager';
 import { StylesheetManager } from './stylesheet-manager';
 import ProcessedNodeManager from './processed-node-manager';
 import {
+  bindErrorHandlerContext,
   callbackWrapper,
   registerErrorHandler,
+  runWithErrorHandler,
   unregisterErrorHandler,
+  type ErrorHandlerContext,
 } from './error-handler';
 import dom from '@grafana/rrweb-utils';
 
-let wrappedEmit!: (e: eventWithoutTime, isCheckout?: boolean) => void;
+// The state of one `record()` call. Several recorders can run on one page at
+// the same time, for example one per micro-frontend, so nothing a recorder
+// needs may live at module level.
+type Recorder = {
+  mirror: Mirror;
+  wrappedEmit: (e: eventWithoutTime, isCheckout?: boolean) => void;
+  takeFullSnapshot: (isCheckout?: boolean) => void;
+  mutationBuffers: MutationBuffer[];
+};
 
-let takeFullSnapshot!: (isCheckout?: boolean) => void;
-let canvasManager!: CanvasManager;
-let recording = false;
+// Recorders that are recording, in the order they started. The static API
+// (`record.addCustomEvent`, `record.takeFullSnapshot`, `record.freezePage`,
+// `record.mirror`) has no way to name a recorder, so it acts on the one that
+// started last.
+const activeRecorders: Recorder[] = [];
+
+function currentRecorder(): Recorder | undefined {
+  return activeRecorders[activeRecorders.length - 1];
+}
 
 // Multiple tools (i.e. MooTools, Prototype.js) override Array.from and drop support for the 2nd parameter
 // Try to pull a clean implementation from a newly created iframe
@@ -61,9 +82,18 @@ try {
   console.debug('Unable to override Array.from', err);
 }
 
-const mirror = createMirror();
-function record<T = eventWithTime>(
-  options: recordOptions<T> = {},
+// A single recorder always uses this mirror, so `record.mirror` keeps its
+// identity across recordings. A recorder that starts while this mirror is in
+// use gets a mirror of its own.
+const defaultMirror = createMirror();
+let defaultMirrorInUse = false;
+
+function startRecording<T = eventWithTime>(
+  options: recordOptions<T>,
+  errorContext: ErrorHandlerContext,
+  // Receives the function that gives back what this recorder holds, so that
+  // `record` can call it if starting fails with an exception.
+  lease: { release?: () => void },
 ): listenerHandler | undefined {
   const {
     emit,
@@ -98,10 +128,7 @@ function record<T = eventWithTime>(
     plugins,
     keepIframeSrcFn = () => false,
     ignoreCSSAttributes = new Set([]),
-    errorHandler,
   } = options;
-
-  registerErrorHandler(errorHandler);
 
   const inEmittingFrame = recordCrossOriginIframes
     ? window.parent === window
@@ -124,6 +151,7 @@ function record<T = eventWithTime>(
     throw new Error('emit function is required');
   }
   if (!inEmittingFrame && !passEmitsToParent) {
+    unregisterErrorHandler(errorContext);
     return () => {
       /* no-op since in this case we don't need to record anything from this frame in particular */
     };
@@ -133,8 +161,49 @@ function record<T = eventWithTime>(
     sampling.mousemove = mousemoveWait;
   }
 
+  const usesDefaultMirror = !defaultMirrorInUse;
+  const mirror = usesDefaultMirror ? defaultMirror : createMirror();
+  if (usesDefaultMirror) {
+    defaultMirrorInUse = true;
+  }
   // reset mirror in case `record` this was called earlier
   mirror.reset();
+
+  const mutationBuffers: MutationBuffer[] = [];
+  const lastInputValueMap: WeakMap<EventTarget, inputValue> = new WeakMap();
+  let stopped = false;
+  const started: { recorder?: Recorder } = {};
+  // What this recorder installed outside of its observers. It is undone when
+  // the recorder stops, and also when it fails to start or is stopped before
+  // the document has loaded.
+  const cleanups: Array<() => void> = [];
+  const release = () => {
+    stopped = true;
+    cleanups.forEach((cleanup) => {
+      try {
+        cleanup();
+      } catch (error) {
+        console.warn(error);
+      }
+    });
+    cleanups.length = 0;
+    const index = started.recorder
+      ? activeRecorders.indexOf(started.recorder)
+      : -1;
+    if (index !== -1) {
+      activeRecorders.splice(index, 1);
+    }
+    if (usesDefaultMirror) {
+      defaultMirrorInUse = false;
+    } else {
+      // Nothing else can read this mirror. Let go of the nodes it holds: a
+      // patch of this recorder can stay installed, and keep the mirror
+      // alive, while another recorder's patch sits on top of it.
+      mirror.reset();
+    }
+    unregisterErrorHandler(errorContext);
+  };
+  lease.release = release;
 
   const maskInputOptions: MaskInputOptions =
     maskAllInputs === true
@@ -183,7 +252,12 @@ function record<T = eventWithTime>(
     }
     return e as unknown as T;
   };
-  wrappedEmit = (r: eventWithoutTime, isCheckout?: boolean) => {
+  const emitEvent = (r: eventWithoutTime, isCheckout?: boolean) => {
+    if (stopped) {
+      // A patch of a browser API can outlive this recorder while another
+      // recorder's patch sits on top of it. Never emit after stop.
+      return;
+    }
     const e = r as eventWithTime;
     e.timestamp = nowTimestamp();
     if (
@@ -211,6 +285,11 @@ function record<T = eventWithTime>(
       window.parent.postMessage(message, '*');
     }
 
+    if (stopped) {
+      // The consumer stopped the recorder from inside its `emit` callback.
+      return;
+    }
+
     if (e.type === EventType.FullSnapshot) {
       lastFullSnapshotEvent = e;
       incrementalSnapshotCount = 0;
@@ -234,6 +313,12 @@ function record<T = eventWithTime>(
       }
     }
   };
+
+  // An event can make the recorder do more work, for example take a full
+  // snapshot. That work must report to this recorder's error handler, whoever
+  // caused the event.
+  const wrappedEmit = (r: eventWithoutTime, isCheckout?: boolean) =>
+    runWithErrorHandler(errorContext, () => emitEvent(r, isCheckout));
 
   const wrappedMutationEmit = (m: mutationCallbackParam) => {
     wrappedEmit({
@@ -296,9 +381,12 @@ function record<T = eventWithTime>(
       });
   }
 
-  const processedNodeManager = new ProcessedNodeManager();
+  cleanups.push(() => iframeManager.destroy());
 
-  canvasManager = new CanvasManager({
+  const processedNodeManager = new ProcessedNodeManager();
+  cleanups.push(() => processedNodeManager.destroy());
+
+  const canvasManager = new CanvasManager({
     recordCanvas,
     mutationCb: wrappedCanvasMutationEmit,
     win: window,
@@ -308,6 +396,8 @@ function record<T = eventWithTime>(
     sampling: sampling.canvas,
     dataURLOptions,
   });
+
+  cleanups.push(() => canvasManager.reset());
 
   const shadowDomManager = new ShadowDomManager({
     mutationCb: wrappedMutationEmit,
@@ -331,12 +421,13 @@ function record<T = eventWithTime>(
       canvasManager,
       keepIframeSrcFn,
       processedNodeManager,
+      mutationBuffers,
     },
     mirror,
   });
 
-  takeFullSnapshot = (isCheckout = false) => {
-    if (!recordDOM) {
+  const snapshotDocument = (isCheckout = false) => {
+    if (!recordDOM || stopped) {
       return;
     }
     wrappedEmit(
@@ -350,6 +441,10 @@ function record<T = eventWithTime>(
       },
       isCheckout,
     );
+    if (stopped) {
+      // The consumer stopped the recorder from inside its `emit` callback.
+      return;
+    }
 
     // When we take a full snapshot, old tracked StyleSheets need to be removed.
     stylesheetManager.reset();
@@ -383,13 +478,19 @@ function record<T = eventWithTime>(
           shadowDomManager.addShadowRoot(dom.shadowRoot(n as Node)!, document);
         }
       },
-      onIframeLoad: (iframe, childSn) => {
-        iframeManager.attachIframe(iframe, childSn);
-        shadowDomManager.observeAttachShadow(iframe);
-      },
-      onStylesheetLoad: (linkEl, childSn) => {
-        stylesheetManager.attachLinkElement(linkEl, childSn);
-      },
+      // The two load callbacks run later, from a browser event, so bind them
+      // to this recorder's error handler.
+      onIframeLoad: bindErrorHandlerContext(
+        (iframe: HTMLIFrameElement, childSn: serializedNodeWithId) => {
+          iframeManager.attachIframe(iframe, childSn);
+          shadowDomManager.observeAttachShadow(iframe);
+        },
+      ),
+      onStylesheetLoad: bindErrorHandlerContext(
+        (linkEl: HTMLLinkElement, childSn: serializedNodeWithId) => {
+          stylesheetManager.attachLinkElement(linkEl, childSn);
+        },
+      ),
       keepIframeSrcFn,
     });
 
@@ -416,6 +517,18 @@ function record<T = eventWithTime>(
         mirror.getId(document),
       );
   };
+  const takeFullSnapshot = (isCheckout?: boolean) =>
+    runWithErrorHandler(errorContext, () => snapshotDocument(isCheckout));
+
+  cleanups.push(() => shadowDomManager.reset());
+
+  const recorder: Recorder = {
+    mirror,
+    wrappedEmit,
+    takeFullSnapshot,
+    mutationBuffers,
+  };
+  started.recorder = recorder;
 
   try {
     const handlers: listenerHandler[] = [];
@@ -533,6 +646,8 @@ function record<T = eventWithTime>(
           stylesheetManager,
           shadowDomManager,
           processedNodeManager,
+          mutationBuffers,
+          lastInputValueMap,
           canvasManager,
           ignoreCSSAttributes,
           plugins:
@@ -555,47 +670,57 @@ function record<T = eventWithTime>(
       );
     };
 
-    iframeManager.addLoadListener((iframeEl) => {
-      try {
-        handlers.push(observe(iframeEl.contentDocument!));
-      } catch (error) {
-        // TODO: handle internal error
-        console.warn(error);
-      }
-    });
+    // The listeners below are called by the browser, not through a wrapped
+    // callback, so bind them to this recorder's error handler here.
+    iframeManager.addLoadListener(
+      bindErrorHandlerContext((iframeEl: HTMLIFrameElement) => {
+        try {
+          handlers.push(observe(iframeEl.contentDocument!));
+        } catch (error) {
+          // TODO: handle internal error
+          console.warn(error);
+        }
+      }),
+    );
 
     const init = () => {
       takeFullSnapshot();
       handlers.push(observe(document));
-      recording = true;
+      activeRecorders.push(recorder);
     };
     if (['interactive', 'complete'].includes(document.readyState)) {
       init();
     } else {
       handlers.push(
-        on('DOMContentLoaded', () => {
-          wrappedEmit({
-            type: EventType.DomContentLoaded,
-            data: {},
-          });
-          if (recordAfter === 'DOMContentLoaded') init();
-        }),
+        on(
+          'DOMContentLoaded',
+          bindErrorHandlerContext(() => {
+            wrappedEmit({
+              type: EventType.DomContentLoaded,
+              data: {},
+            });
+            if (recordAfter === 'DOMContentLoaded') init();
+          }),
+        ),
       );
       handlers.push(
         on(
           'load',
-          () => {
+          bindErrorHandlerContext(() => {
             wrappedEmit({
               type: EventType.Load,
               data: {},
             });
             if (recordAfter === 'load') init();
-          },
+          }),
           window,
         ),
       );
     }
     return () => {
+      if (stopped) {
+        return;
+      }
       handlers.forEach((handler) => {
         try {
           handler();
@@ -615,21 +740,48 @@ function record<T = eventWithTime>(
           }
         }
       });
-      processedNodeManager.destroy();
-      recording = false;
-      unregisterErrorHandler();
+      release();
     };
   } catch (error) {
     // TODO: handle internal error
     console.warn(error);
+    release();
+  }
+}
+
+/**
+ * Starts a recorder and returns a function that stops it.
+ *
+ * Each call starts an independent recorder with its own options, event
+ * stream and node ids. Several recorders can run on one page at the same
+ * time and can stop in any order.
+ */
+function record<T = eventWithTime>(
+  options: recordOptions<T> = {},
+): listenerHandler | undefined {
+  const errorContext = registerErrorHandler(options.errorHandler);
+  const lease: { release?: () => void } = {};
+  try {
+    const stop = runWithErrorHandler(errorContext, () =>
+      startRecording(options, errorContext, lease),
+    );
+    if (!stop) {
+      unregisterErrorHandler(errorContext);
+    }
+    return stop;
+  } catch (error) {
+    lease.release?.();
+    unregisterErrorHandler(errorContext);
+    throw error;
   }
 }
 
 record.addCustomEvent = <T>(tag: string, payload: T) => {
-  if (!recording) {
+  const recorder = currentRecorder();
+  if (!recorder) {
     throw new Error('please add custom event after start recording');
   }
-  wrappedEmit({
+  recorder.wrappedEmit({
     type: EventType.Custom,
     data: {
       tag,
@@ -639,16 +791,24 @@ record.addCustomEvent = <T>(tag: string, payload: T) => {
 };
 
 record.freezePage = () => {
-  mutationBuffers.forEach((buf) => buf.freeze());
+  currentRecorder()?.mutationBuffers.forEach((buf) => buf.freeze());
 };
 
 record.takeFullSnapshot = (isCheckout?: boolean) => {
-  if (!recording) {
+  const recorder = currentRecorder();
+  if (!recorder) {
     throw new Error('please take full snapshot after start recording');
   }
-  takeFullSnapshot(isCheckout);
+  recorder.takeFullSnapshot(isCheckout);
 };
 
-record.mirror = mirror;
+record.mirror = defaultMirror;
+// The mirror of the recorder that started last, or the default mirror when
+// nothing is recording.
+Object.defineProperty(record, 'mirror', {
+  enumerable: true,
+  configurable: true,
+  get: () => currentRecorder()?.mirror ?? defaultMirror,
+});
 
 export default record;
