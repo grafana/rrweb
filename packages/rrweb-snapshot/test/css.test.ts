@@ -18,6 +18,23 @@ import { NodeType } from '@grafana/rrweb-types';
 import { Window } from 'happy-dom';
 
 describe('css parser', () => {
+  it('bundles a PostCSS version past the source-map path traversal fix', () => {
+    const bundle = fs.readFileSync(
+      path.resolve(__dirname, '../dist/rrweb-snapshot.cjs'),
+      'utf8',
+    );
+    const version = bundle.match(/this\.version = "(\d+)\.(\d+)\.(\d+)"/);
+    expect(version).not.toBeNull();
+    if (!version) {
+      throw new Error('PostCSS version was not found in the snapshot bundle');
+    }
+    const [major, minor, patch] = version.slice(1).map(Number);
+    expect(
+      major > 8 ||
+        (major === 8 && (minor > 5 || (minor === 5 && patch >= 18))),
+    ).toBe(true);
+  });
+
   function parse(plugin: AcceptedPlugin, input: string): string {
     const ast = postcss([plugin]).process(input, {});
     return ast.css;
