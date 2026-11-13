@@ -349,6 +349,24 @@ Preserve defaults unless a task explicitly changes them:
 Observer setup must return cleanup handlers. Be careful to unregister hooks,
 event listeners, plugin observers, and error handlers.
 
+Several recorders can run on one page at the same time, for example one per
+micro-frontend, and they can start and stop in any order. They can share one
+copy of the module or each use their own copy. To keep that working:
+
+- Keep recorder state inside the `record()` call or in objects it creates
+  (mirror, mutation buffers, managers, error handler). Do not add
+  module-level state that one recorder could overwrite for another.
+- When patching a browser API, remove the patch through `trackPatch` or
+  `trackPatchWith` from `@rrweb/utils` (`patch` and `hookSetter` already do).
+  Never restore by assigning the saved original: another recorder may have
+  patched the same member afterwards.
+- The static API (`record.addCustomEvent`, `record.takeFullSnapshot`,
+  `record.freezePage`, `record.mirror`) acts on the recorder that started
+  last.
+- Cover new recorder behavior in
+  `packages/rrweb/test/record/concurrent-recorders.test.ts` when it touches
+  shared browser state.
+
 Cross-origin iframe recording uses postMessage and origin metadata. Avoid
 broad changes to iframe message handling without targeted tests.
 

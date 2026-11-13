@@ -11,9 +11,13 @@ import type {
   IMirror,
 } from '@grafana/rrweb-types';
 import type { Mirror, SlimDOMOptions } from '@grafana/rrweb-snapshot';
-import { isShadowRoot, IGNORED_NODE, classMatchesRegex } from '@grafana/rrweb-snapshot';
+import {
+  isShadowRoot,
+  IGNORED_NODE,
+  classMatchesRegex,
+} from '@grafana/rrweb-snapshot';
 import { RRNode, RRIFrameElement, BaseRRNode } from '@grafana/rrdom';
-import dom from '@grafana/rrweb-utils';
+import dom, { trackPatchWith } from '@grafana/rrweb-utils';
 export { nowTimestamp } from '@grafana/rrweb-utils';
 
 export function on(
@@ -108,24 +112,46 @@ export function hookSetter<T>(
   win = window,
 ): hookResetter {
   const original = win.Object.getOwnPropertyDescriptor(target, key);
-  win.Object.defineProperty(
-    target,
-    key,
-    isRevoked
-      ? d
-      : {
-          set(value) {
-            // put hooked setter into event loop to avoid of set latency
-            setTimeout(() => {
-              d.set!.call(this, value);
-            }, 0);
-            if (original && original.set) {
-              original.set.call(this, value);
-            }
-          },
-        },
+  if (isRevoked) {
+    win.Object.defineProperty(target, key, d);
+    return () => hookSetter(target, key, original || {}, true);
+  }
+
+  // The hook can stay installed after it was given up, while another hook
+  // sits on top of it. It must do nothing from then on.
+  let active = true;
+  const hooked: PropertyDescriptor = {
+    set(value) {
+      if (active) {
+        // put hooked setter into event loop to avoid of set latency
+        setTimeout(() => {
+          d.set!.call(this, value);
+        }, 0);
+      }
+      if (original && original.set) {
+        original.set.call(this, value);
+      }
+    },
+  };
+  win.Object.defineProperty(target, key, hooked);
+
+  // Several recorders can hook the same setter and stop in any order.
+  const restore = trackPatchWith<PropertyDescriptor>(
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    hooked.set,
+    original || {},
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    () => win.Object.getOwnPropertyDescriptor(target, key)?.set,
+    (descriptor) => {
+      win.Object.defineProperty(target, key, descriptor);
+    },
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    (descriptor) => descriptor.set,
   );
-  return () => hookSetter(target, key, original || {}, true);
+  return () => {
+    active = false;
+    restore();
+  };
 }
 
 export function getWindowScroll(win: Window) {

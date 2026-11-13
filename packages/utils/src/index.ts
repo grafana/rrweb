@@ -119,7 +119,13 @@ export function getUntaintedPrototype<T extends keyof BasePrototypeCache>(
       // rr-block prevents rrweb from serializing this iframe in subsequent snapshots
       iframeEl.classList.add('rr-block');
       iframeEl.setAttribute('__rrwebUntaintedMutationObserver', '');
-      untaintedBaseIframeCleanup[key] = () => iframeEl.remove();
+      untaintedBaseIframeCleanup[key] = () => {
+        iframeEl.remove();
+        // The prototype belongs to the removed iframe. Look it up again the
+        // next time, so that a later recorder gets a live one.
+        delete untaintedBasePrototype[key];
+        delete untaintedBaseIframeCleanup[key];
+      };
     } else {
       iframeEl.remove();
     }
@@ -247,16 +253,44 @@ export function querySelectorAll(
   return getUntaintedAccessor('Element', n, 'querySelectorAll')(selectors);
 }
 
+// How many observers use the iframe that backs the untainted
+// MutationObserver. Several recorders share it, so it may only be removed
+// when the last one lets go.
+let mutationObserverIframeUsers = 0;
+
 export function mutationObserverCtor(): [
   (typeof MutationObserver)['prototype']['constructor'],
   () => void,
 ] {
-  return [
-    getUntaintedPrototype('MutationObserver').constructor,
-    untaintedBaseIframeCleanup['MutationObserver'] ??
-      (() => {
+  const ctor = getUntaintedPrototype('MutationObserver').constructor;
+  const cleanup = untaintedBaseIframeCleanup['MutationObserver'];
+  if (!cleanup) {
+    return [
+      ctor,
+      () => {
         /* no-op; a cleanup function is only needed in Safari browsers */
-      }),
+      },
+    ];
+  }
+
+  mutationObserverIframeUsers++;
+  let released = false;
+  return [
+    ctor,
+    () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      mutationObserverIframeUsers--;
+      if (
+        mutationObserverIframeUsers <= 0 &&
+        untaintedBaseIframeCleanup['MutationObserver'] === cleanup
+      ) {
+        mutationObserverIframeUsers = 0;
+        cleanup();
+      }
+    },
   ];
 }
 
@@ -269,11 +303,184 @@ if (!(/*@__PURE__*/ /[1-9][0-9]{12}/.test(Date.now().toString()))) {
 }
 export { nowTimestamp };
 
+type PatchRecord = {
+  // What the patched member held before this patch was installed.
+  previous: unknown;
+  // Set once the owner of the patch asked to remove it.
+  restored: boolean;
+};
+
+// Several recorders can patch the same browser API, and they can stop in any
+// order. Each patch closes over the value it replaced, so a patch in the
+// middle of the chain cannot be unlinked while a later patch still sits on
+// top of it. This registry remembers which patches were given up, so that
+// they are removed as soon as they become the top of the chain.
+//
+// The registry is shared through a global symbol, so that separately bundled
+// copies of rrweb on one page cooperate as well.
+const PATCH_REGISTRY_KEY = Symbol.for('@grafana/rrweb.patchRegistry');
+
+function getPatchRegistry(): WeakMap<object, PatchRecord> | null {
+  if (typeof WeakMap === 'undefined') {
+    return null;
+  }
+  try {
+    const holder = globalThis as unknown as Record<
+      symbol,
+      WeakMap<object, PatchRecord> | undefined
+    >;
+    let registry = holder[PATCH_REGISTRY_KEY];
+    if (!registry) {
+      registry = new WeakMap<object, PatchRecord>();
+      Object.defineProperty(holder, PATCH_REGISTRY_KEY, {
+        value: registry,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+      });
+    }
+    return registry;
+  } catch {
+    return null;
+  }
+}
+
+function isPatchKey(value: unknown): value is object {
+  return (
+    value !== null && (typeof value === 'object' || typeof value === 'function')
+  );
+}
+
+/**
+ * Registers a patch that is already installed, and returns a function that
+ * removes it. Removal is safe in any order:
+ *
+ * - If the patch is still the current value, the value it replaced is put
+ *   back. Earlier patches that were already given up are skipped.
+ * - If something else was installed on top, the patch is only marked as given
+ *   up. It is removed later, when the patch on top of it is removed.
+ *
+ * `key` identifies the patch (a function, or a property setter). `read`
+ * returns the key that is currently installed, and `write` installs a value.
+ */
+export function trackPatchWith<T>(
+  key: unknown,
+  previous: T,
+  read: () => unknown,
+  write: (value: T) => void,
+  keyOf: (value: T) => unknown = (value) => value,
+): () => void {
+  const registry = getPatchRegistry();
+  if (!registry || !isPatchKey(key) || key === keyOf(previous)) {
+    return () => {
+      write(previous);
+    };
+  }
+
+  const record: PatchRecord = { previous, restored: false };
+  registry.set(key, record);
+
+  return () => {
+    if (record.restored) {
+      return;
+    }
+    record.restored = true;
+
+    if (read() !== key) {
+      // Another patch sits on top of this one. Removing this one now would
+      // remove that patch too.
+      return;
+    }
+
+    let target = previous;
+    for (;;) {
+      const targetKey = keyOf(target);
+      const below = isPatchKey(targetKey) ? registry.get(targetKey) : undefined;
+      if (!below || !below.restored) {
+        break;
+      }
+      target = below.previous as T;
+    }
+    write(target);
+  };
+}
+
+/**
+ * Registers a patch of `source[name]` that is already installed, where
+ * `original` is the value it replaced. Returns a function that removes the
+ * patch and is safe to call in any order. See `trackPatchWith`.
+ */
+export function trackPatch(
+  source: object,
+  name: string,
+  original: unknown,
+  // Whether the patch must stop having any effect as soon as it is given up,
+  // even while another patch still sits on top of it. This costs one more
+  // call on the stack for every call of the patched function.
+  inertAfterRestore = true,
+): () => void {
+  const target = source as Record<string, unknown>;
+  const read = () => target[name];
+  const write = (value: unknown) => {
+    target[name] = value;
+  };
+
+  const wrapped = target[name];
+  if (
+    !inertAfterRestore ||
+    typeof wrapped !== 'function' ||
+    typeof original !== 'function' ||
+    typeof Proxy === 'undefined'
+  ) {
+    return trackPatchWith(wrapped, original, read, write);
+  }
+
+  // A patch that was given up can stay installed while another patch sits on
+  // top of it. Until it is removed it must do nothing, so it is installed
+  // behind a switch that sends calls straight to what the patch replaced.
+  let restored = false;
+  type AnyFunction = (...args: unknown[]) => unknown;
+  type AnyConstructor = new (...args: unknown[]) => object;
+  const installed: unknown = new Proxy(wrapped as AnyFunction, {
+    apply(fn, thisArg, args: unknown[]) {
+      return Reflect.apply(
+        restored ? (original as AnyFunction) : fn,
+        thisArg,
+        args,
+      );
+    },
+    construct(fn, args: unknown[], newTarget) {
+      if (restored) {
+        // A class that extends the patch keeps calling it after it was given
+        // up. Build what the replaced constructor builds, as the patch did.
+        return Reflect.construct(original as AnyConstructor, args);
+      }
+      return Reflect.construct(
+        fn as unknown as AnyConstructor,
+        args,
+        newTarget === installed
+          ? (fn as unknown as AnyConstructor)
+          : (newTarget as AnyConstructor),
+      );
+    },
+  });
+  write(installed);
+
+  const restore = trackPatchWith(installed, original, read, write);
+  return () => {
+    restored = true;
+    restore();
+  };
+}
+
 // copy from https://github.com/getsentry/sentry-javascript/blob/b2109071975af8bf0316d3b5b38f519bdaf5dc15/packages/utils/src/object.ts
 export function patch(
   source: { [key: string]: any },
   name: string,
   replacement: (...args: unknown[]) => unknown,
+  // See `trackPatch`. Off by default, because the extra call on the stack is
+  // visible to a replacement that reads its own stack trace.
+  options: { inertAfterRestore?: boolean } = {},
 ): () => void {
   try {
     if (!(name in source)) {
@@ -300,9 +507,12 @@ export function patch(
 
     source[name] = wrapped;
 
-    return () => {
-      source[name] = original;
-    };
+    return trackPatch(
+      source,
+      name,
+      original,
+      options.inertAfterRestore === true,
+    );
   } catch {
     return () => {
       //

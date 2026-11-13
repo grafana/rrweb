@@ -21,6 +21,7 @@ import type {
   fontCallback,
   hooksParam,
   inputCallback,
+  inputValue,
   IWindow,
   KeepIframeSrcFn,
   listenerHandler,
@@ -40,6 +41,7 @@ import type {
   UnpackFn,
 } from '@grafana/rrweb-types';
 import type ProcessedNodeManager from './record/processed-node-manager';
+import type MutationBuffer from './record/mutation';
 
 export type recordOptions<T> = {
   emit?: (e: T, isCheckout?: boolean) => void;
@@ -124,6 +126,10 @@ export type observerParam = {
   shadowDomManager: ShadowDomManager;
   canvasManager: CanvasManager;
   processedNodeManager: ProcessedNodeManager;
+  // The mutation buffers of the recorder these observers belong to.
+  mutationBuffers: MutationBuffer[];
+  // The last value this recorder reported for each input, to skip repeats.
+  lastInputValueMap: WeakMap<EventTarget, inputValue>;
   ignoreCSSAttributes: Set<string>;
   plugins: Array<{
     observer: (
@@ -159,6 +165,7 @@ export type MutationBufferParam = Pick<
   | 'shadowDomManager'
   | 'canvasManager'
   | 'processedNodeManager'
+  | 'mutationBuffers'
 >;
 
 export type ReplayPlugin = {
