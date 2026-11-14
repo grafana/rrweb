@@ -551,6 +551,13 @@ consider compatibility or use guarded feature detection.
 
 GitHub Actions workflows:
 
+- **Pull Request** (`.github/workflows/pull-request.yml`): builds, checks, and
+  tests rrweb, then captures replay review artifacts and Faro benchmark reports.
+  A separate job with only pull request write permission updates one artifact
+  link comment for branches in this repository. It never checks out PR code and
+  skips fork PRs, whose CI token is read-only. The test job keeps read-only
+  contents permission.
+
 - **Dependency review** (`.github/workflows/dependency-review.yml`): runs on
   PRs and merge groups. Checks that new dependencies use Apache-2.0-
   compatible licenses (MIT, ISC, BSD-2/3-Clause, 0BSD, BlueOak, Unlicense,
