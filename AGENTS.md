@@ -374,6 +374,11 @@ later flushed to the real DOM via `diff()`.
 Canvas replay is gated by `UNSAFE_replayCanvas`. Do not apply canvas
 mutation data when this option is false.
 
+`replayCanvasSnapshots` is a separate opt-in for bounded, exact static WebP
+2D canvas snapshot events. It keeps the supported replay iframe sandbox and
+cannot be combined with `UNSAFE_replayCanvas`. Do not route these snapshots
+through the general canvas command replay path.
+
 Injected replay styles are not part of the recorded page. Do not serialize
 them or assign normal serialized node ids to them. rrdom uses negative ids
 for unserialized replay-only nodes.
