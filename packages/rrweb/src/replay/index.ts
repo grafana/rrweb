@@ -91,6 +91,7 @@ import canvasMutation from './canvas';
 import { deserializeArg } from './canvas/deserialize-args';
 import { MediaManager } from './media';
 import { applyDialogToTopLevel, removeDialogFromTopLevel } from './dialog';
+import { attachRasterCanvasSnapshots } from './canvas/raster-snapshots';
 
 const SKIP_TIME_INTERVAL = 5 * 1000;
 
@@ -119,6 +120,7 @@ export class Replayer {
   public wrapper: HTMLDivElement;
   public iframe: HTMLIFrameElement;
   private UNSAFE_replayCanvas = false;
+  private detachRasterCanvasSnapshots?: () => void;
 
   public service: ReturnType<typeof createPlayerService>;
   public speedService: ReturnType<typeof createSpeedService>;
@@ -200,12 +202,14 @@ export class Replayer {
       insertStyleRules: [],
       triggerFocus: true,
       UNSAFE_replayCanvas: false,
+      replayCanvasSnapshots: false,
       pauseAnimation: true,
       mouseTail: defaultMouseTailConfig,
       useVirtualDom: true, // Virtual-dom optimization is enabled by default.
       logger: console,
     };
     this.config = Object.assign({}, defaultConfig, config);
+    this.validateCanvasReplayConfig(this.config);
 
     this.handleResize = this.handleResize.bind(this);
     this.getCastFn = this.getCastFn.bind(this);
@@ -213,6 +217,9 @@ export class Replayer {
     this.emitter.on(ReplayerEvents.Resize, this.handleResize as Handler);
 
     this.setupDom();
+    if (this.config.replayCanvasSnapshots) {
+      this.detachRasterCanvasSnapshots = attachRasterCanvasSnapshots(this);
+    }
 
     /**
      * Exposes mirror to the plugins
@@ -438,12 +445,27 @@ export class Replayer {
   }
 
   public setConfig(config: Partial<playerConfig>) {
+    this.validateCanvasReplayConfig(
+      { ...this.config, ...config },
+      this.UNSAFE_replayCanvas,
+    );
     Object.keys(config).forEach((key) => {
       const newConfigValue = config[key as keyof playerConfig];
       (this.config as Record<keyof playerConfig, typeof newConfigValue>)[
         key as keyof playerConfig
       ] = config[key as keyof playerConfig];
     });
+    if (typeof config.replayCanvasSnapshots !== 'undefined') {
+      if (config.replayCanvasSnapshots && !this.detachRasterCanvasSnapshots) {
+        this.detachRasterCanvasSnapshots = attachRasterCanvasSnapshots(this);
+      } else if (
+        !config.replayCanvasSnapshots &&
+        this.detachRasterCanvasSnapshots
+      ) {
+        this.detachRasterCanvasSnapshots();
+        this.detachRasterCanvasSnapshots = undefined;
+      }
+    }
     if (!this.config.skipInactive) {
       this.backToNormal();
     }
@@ -558,6 +580,8 @@ export class Replayer {
    */
   public destroy() {
     this.pause();
+    this.detachRasterCanvasSnapshots?.();
+    this.detachRasterCanvasSnapshots = undefined;
     this.mirror.reset();
     this.styleMirror.reset();
     this.mediaManager.reset();
@@ -636,6 +660,20 @@ export class Replayer {
       );
 
       polyfill(this.iframe.contentWindow as IWindow);
+    }
+  }
+
+  private validateCanvasReplayConfig(
+    config: playerConfig,
+    hasUnprotectedIframe = config.UNSAFE_replayCanvas,
+  ) {
+    if (
+      config.replayCanvasSnapshots &&
+      (config.UNSAFE_replayCanvas || hasUnprotectedIframe)
+    ) {
+      throw new Error(
+        'replayCanvasSnapshots cannot be combined with UNSAFE_replayCanvas.',
+      );
     }
   }
 
