@@ -1022,6 +1022,120 @@ describe('record integration tests', function (this: ISuite) {
     await assertSnapshot(snapshots);
   });
 
+  it('applies inline image blur to images added to shadow DOM', async () => {
+    const page: puppeteer.Page = await browser.newPage();
+    await page.goto(serverURL);
+    await page.setContent(
+      getHtml.call(this, 'shadow-dom.html', {
+        inlineImages: true,
+        inlineImagesBlur: 8,
+      }),
+    );
+    await page.waitForFunction(
+      'window.snapshots && window.snapshots.length > 0',
+    );
+    const imageDataURL = `data:image/png;base64,${fs.readFileSync(
+      path.resolve(__dirname, 'html/assets/robot.png'),
+      'base64',
+    )}`;
+    await page.evaluate(async (imageSrc) => {
+      const image = new Image();
+      image.src = imageSrc;
+      await image.decode();
+      document
+        .querySelector<HTMLDivElement>('.my-element')!
+        .shadowRoot!.appendChild(image);
+    }, imageDataURL);
+    await page.waitForFunction(() => {
+      const findImageDataURL = (value: unknown): string | undefined => {
+        if (!value || typeof value !== 'object') {
+          return;
+        }
+        const node = value as {
+          tagName?: string;
+          attributes?: { rr_dataURL?: string };
+        };
+        if (node.tagName === 'img') {
+          return node.attributes?.rr_dataURL;
+        }
+        for (const child of Object.values(value)) {
+          const dataURL = findImageDataURL(child);
+          if (dataURL) {
+            return dataURL;
+          }
+        }
+      };
+      return Boolean(findImageDataURL((window as any).snapshots));
+    });
+
+    const inlineDataURL = await page.evaluate(() => {
+      const findImageDataURL = (value: unknown): string | undefined => {
+        if (!value || typeof value !== 'object') {
+          return;
+        }
+        const node = value as {
+          tagName?: string;
+          attributes?: { rr_dataURL?: string };
+        };
+        if (node.tagName === 'img') {
+          return node.attributes?.rr_dataURL;
+        }
+        for (const child of Object.values(value)) {
+          const dataURL = findImageDataURL(child);
+          if (dataURL) {
+            return dataURL;
+          }
+        }
+      };
+      return findImageDataURL((window as any).snapshots);
+    });
+
+    expect(inlineDataURL).toMatch(/^data:image\//);
+    const changedPixels = await page.evaluate(
+      async ({ inputDataURL, outputDataURL }) => {
+        const inputImage = new Image();
+        inputImage.src = inputDataURL;
+        await inputImage.decode();
+        const outputImage = new Image();
+        outputImage.src = outputDataURL;
+        await outputImage.decode();
+        const canvas = document.createElement('canvas');
+        canvas.width = inputImage.naturalWidth;
+        canvas.height = inputImage.naturalHeight;
+        const context = canvas.getContext('2d')!;
+        context.drawImage(inputImage, 0, 0);
+        const inputPixels = context.getImageData(
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+        ).data;
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(outputImage, 0, 0);
+        const outputPixels = context.getImageData(
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+        ).data;
+        let changedPixels = 0;
+        for (let index = 0; index < inputPixels.length; index += 4) {
+          if (
+            inputPixels[index] !== outputPixels[index] ||
+            inputPixels[index + 1] !== outputPixels[index + 1] ||
+            inputPixels[index + 2] !== outputPixels[index + 2]
+          ) {
+            changedPixels += 1;
+          }
+        }
+        return changedPixels;
+      },
+      { inputDataURL: imageDataURL, outputDataURL: inlineDataURL! },
+    );
+    expect(changedPixels).toBeGreaterThan(100);
+    await page.close();
+  });
+
   it('should record shadow DOM 2', async () => {
     const page: puppeteer.Page = await browser.newPage();
     await page.goto('about:blank');

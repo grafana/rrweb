@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Inline image blur demo</title>
+    <style>
+      body {
+        display: flex;
+        gap: 24px;
+        font-family: sans-serif;
+      }
+      img {
+        display: block;
+        width: 200px;
+      }
+    </style>
+  </head>
+  <body>
+    <figure>
+      <figcaption>Input image</figcaption>
+      <img id="input-image" src="/images/robot.png" alt="Robot input" />
+    </figure>
+    <figure>
+      <figcaption>Blurred inline output (8 source pixels)</figcaption>
+      <img id="output-image" alt="Blurred inline output" />
+    </figure>
+  </body>
+</html>

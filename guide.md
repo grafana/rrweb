@@ -229,10 +229,15 @@ The `record` function accepts the following options.
 | recordCrossOriginIframes | false              | Whether to record cross origin iframes. rrweb has to be injected in each child iframe for this to work. Available options:<br/>`false`, <br/>`true`                                           |
 | recordAfter              | 'load'             | If the document is not ready, then the recorder will start recording after the specified event is fired. Available options: `DOMContentLoaded`, `load`                                        |
 | inlineImages             | false              | Deprecated since 2.0.0. Still supported, but planned to be superseded by future `captureAssets` asset recording APIs.                                                                         |
+| inlineImagesBlur         | -                  | Optional Gaussian blur radius in source-image pixels applied to images captured by `inlineImages`. Requires `inlineImages: true`; zero disables blur.                                         |
 | collectFonts             | false              | whether to collect fonts in the website                                                                                                                                                       |
 | userTriggeredOnInput     | false              | whether to add `userTriggered` on input events that indicates if this event was triggered directly by the user or not. [What is `userTriggered`?](https://github.com/rrweb-io/rrweb/pull/495) |
 | plugins                  | []                 | load plugins to provide extended record functions. [What is plugins?](./docs/recipes/plugin.md)                                                                                               |
 | errorHandler             | -                  | A callback that is called if something inside of rrweb throws an error. The callback receives the error as argument.                                                                          |
+
+With `inlineImages: true`, set `inlineImagesBlur` to a radius in source-image pixels to blur captured pixels before serialization. The image below shows the input beside the serialized output using an 8px radius. The image's original `src` attribute is retained, so if inlining is skipped, replay may still load the source image without blur. Blur adds work during capture, especially for large images. Since the blur is clipped to the source image's canvas, strong radii can soften the image edges. If the browser does not support canvas filters or rejects the radius, rrweb skips creating an unblurred `rr_dataURL`.
+
+![Input image beside the serialized image blurred with an 8px radius](docs/images/inline-image-blur-comparison.png)
 
 #### Privacy
 
