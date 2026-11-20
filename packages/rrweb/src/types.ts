@@ -77,6 +77,11 @@ export type recordOptions<T> = {
    * be superseded by future captureAssets asset recording APIs.
    */
   inlineImages?: boolean;
+  /**
+   * Gaussian blur radius in source-image pixels for images captured by
+   * inlineImages. Requires inlineImages to be enabled; zero disables blur.
+   */
+  inlineImagesBlur?: number;
   plugins?: RecordPlugin[];
   // departed, please use sampling options
   mousemoveWait?: number;
@@ -113,6 +118,7 @@ export type observerParam = {
   recordDOM: boolean;
   recordCanvas: boolean;
   inlineImages: boolean;
+  inlineImagesBlur?: number;
   userTriggeredOnInput: boolean;
   collectFonts: boolean;
   slimDOMOptions: SlimDOMOptions;
@@ -150,6 +156,7 @@ export type MutationBufferParam = Pick<
   | 'keepIframeSrcFn'
   | 'recordCanvas'
   | 'inlineImages'
+  | 'inlineImagesBlur'
   | 'slimDOMOptions'
   | 'dataURLOptions'
   | 'doc'

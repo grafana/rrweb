@@ -803,6 +803,7 @@ export function generateRecordSnippet(options: recordOptions<eventWithTime>) {
     recordCanvas: ${options.recordCanvas},
     recordAfter: '${options.recordAfter || 'load'}',
     inlineImages: ${options.inlineImages},
+    inlineImagesBlur: ${options.inlineImagesBlur},
     plugins: ${options.plugins}
   });
   `;

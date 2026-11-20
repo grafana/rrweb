@@ -95,6 +95,7 @@ function record<T = eventWithTime>(
     userTriggeredOnInput = false,
     collectFonts = false,
     inlineImages = false,
+    inlineImagesBlur,
     plugins,
     keepIframeSrcFn = () => false,
     ignoreCSSAttributes = new Set([]),
@@ -324,6 +325,7 @@ function record<T = eventWithTime>(
       maskInputFn,
       recordCanvas,
       inlineImages,
+      inlineImagesBlur,
       sampling,
       slimDOMOptions,
       iframeManager,
@@ -371,6 +373,7 @@ function record<T = eventWithTime>(
       dataURLOptions,
       recordCanvas,
       inlineImages,
+      inlineImagesBlur,
       onSerialize: (n) => {
         if (isSerializedIframe(n, mirror)) {
           iframeManager.addIframe(n as HTMLIFrameElement);
@@ -519,6 +522,7 @@ function record<T = eventWithTime>(
           recordDOM,
           recordCanvas,
           inlineImages,
+          inlineImagesBlur,
           userTriggeredOnInput,
           collectFonts,
           doc,
