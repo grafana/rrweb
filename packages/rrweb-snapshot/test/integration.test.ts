@@ -277,6 +277,97 @@ iframe.contentDocument.querySelector('center').clientHeight
     );
   });
 
+  it('applies the configured blur when inlining images', async () => {
+    const page = await browser.newPage();
+    await page.goto(`${serverURL}/fixtures/inline-image-blur.html`, {
+      waitUntil: 'load',
+    });
+    await page.waitForFunction(
+      () =>
+        (document.querySelector('#input-image') as HTMLImageElement)
+          .naturalWidth > 0,
+    );
+    const inlineDataURL = await page.evaluate(`${code}
+      const findImageDataURL = (node) => {
+        if (node.tagName === 'img') return node.attributes.rr_dataURL;
+        for (const child of node.childNodes || []) {
+          const dataURL = findImageDataURL(child);
+          if (dataURL) return dataURL;
+        }
+      };
+      const blurredSnapshot = rrwebSnapshot.snapshot(document, {
+        inlineImages: true,
+        inlineImagesBlur: 8,
+        inlineStylesheet: false,
+      });
+      const originalSnapshot = rrwebSnapshot.snapshot(document, {
+        inlineImages: true,
+        inlineStylesheet: false,
+      });
+      JSON.stringify({
+        blurred: findImageDataURL(blurredSnapshot),
+        original: findImageDataURL(originalSnapshot),
+      });
+    `);
+
+    const { blurred, original } = JSON.parse(inlineDataURL as string);
+    const pixelDifferences = await page.evaluate(
+      async (dataURLs) => {
+        const inputImage =
+          document.querySelector<HTMLImageElement>('#input-image')!;
+        const outputImage =
+          document.querySelector<HTMLImageElement>('#output-image')!;
+        outputImage.src = dataURLs.blurred;
+        await outputImage.decode();
+        const originalImage = new Image();
+        originalImage.src = dataURLs.original;
+        await originalImage.decode();
+
+        const canvas = document.createElement('canvas');
+        canvas.width = inputImage.naturalWidth;
+        canvas.height = inputImage.naturalHeight;
+        const context = canvas.getContext('2d')!;
+        const countChangedPixels = (comparisonImage) => {
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(inputImage, 0, 0);
+          const inputPixels = context.getImageData(
+            0,
+            0,
+            canvas.width,
+            canvas.height,
+          ).data;
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(comparisonImage, 0, 0);
+          const comparisonPixels = context.getImageData(
+            0,
+            0,
+            canvas.width,
+            canvas.height,
+          ).data;
+          let changedPixels = 0;
+          for (let index = 0; index < inputPixels.length; index += 4) {
+            if (
+              inputPixels[index] !== comparisonPixels[index] ||
+              inputPixels[index + 1] !== comparisonPixels[index + 1] ||
+              inputPixels[index + 2] !== comparisonPixels[index + 2]
+            ) {
+              changedPixels += 1;
+            }
+          }
+          return changedPixels;
+        };
+        return {
+          blurred: countChangedPixels(outputImage),
+          original: countChangedPixels(originalImage),
+        };
+      },
+      { blurred, original },
+    );
+    expect(pixelDifferences.blurred).toBeGreaterThan(100);
+    expect(pixelDifferences.original).toBe(0);
+    await page.close();
+  });
+
   it('correctly saves cross-origin images offline', async () => {
     const imageServer = await startServer(3032, true, true);
     const page: puppeteer.Page = await browser.newPage();
