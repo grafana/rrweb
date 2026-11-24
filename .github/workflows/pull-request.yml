@@ -260,6 +260,13 @@ jobs:
           comparison: replay-report/replay-comparison.webm
           source: replay-report/candidate/fixture-interaction.webm
 
+      - name: Publish URL navigation videos
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/upload-replay-videos
+        with:
+          test-id: url-navigation
+          source: replay-report/candidate/compatibility/url-meta-navigation.webm
+
       - name: Upload base checkpoint screenshot
         id: base-screenshot
         if: ${{ !cancelled() }}
