@@ -564,6 +564,81 @@ describe('raster canvas snapshots', () => {
     }
   });
 
+  it('clears unsupported snapshots after virtual DOM reconciliation', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 480;
+    document.body.append(canvas);
+    const listeners = new Map<string, (event: unknown) => void>();
+    const replayer = {
+      usingVirtualDom: true,
+      getMirror: () => ({ getNode: () => canvas }),
+      iframe: { contentDocument: document },
+      on: (name: string, callback: (event: unknown) => void) =>
+        listeners.set(name, callback),
+      off: vi.fn(),
+    } as unknown as Replayer;
+    const previousDecode = Object.getOwnPropertyDescriptor(
+      HTMLImageElement.prototype,
+      'decode',
+    );
+    Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+      configurable: true,
+      value: function (this: HTMLImageElement) {
+        Object.defineProperty(this, 'naturalWidth', {
+          configurable: true,
+          value: 640,
+        });
+        Object.defineProperty(this, 'naturalHeight', {
+          configurable: true,
+          value: 480,
+        });
+        return Promise.resolve();
+      },
+    });
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    let pendingFrame: FrameRequestCallback | undefined;
+    globalThis.requestAnimationFrame = (callback) => {
+      pendingFrame = callback;
+      return 1;
+    };
+    globalThis.cancelAnimationFrame = () => {};
+    let detach: (() => void) | undefined;
+
+    try {
+      detach = attachRasterCanvasSnapshots(replayer);
+      listeners.get(ReplayerEvents.EventCast)?.(makeEvent());
+      pendingFrame?.(0);
+      const image = canvas.querySelector('img');
+      expect(image).not.toBeNull();
+      await Promise.resolve();
+      expect(image?.isConnected).toBe(true);
+
+      const unsupportedEvent = makeEvent();
+      (unsupportedEvent.data as any).commands[1].property = 'fillRect';
+      listeners.get(ReplayerEvents.EventCast)?.(unsupportedEvent);
+      expect(image?.isConnected).toBe(true);
+      await Promise.resolve();
+      expect(image?.isConnected).toBe(false);
+      expect(canvas.hasAttribute('data-rrweb-raster-snapshot')).toBe(false);
+    } finally {
+      detach?.();
+      if (previousDecode) {
+        Object.defineProperty(
+          HTMLImageElement.prototype,
+          'decode',
+          previousDecode,
+        );
+      } else {
+        delete (HTMLImageElement.prototype as Partial<HTMLImageElement>).decode;
+      }
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+      canvas.remove();
+    }
+  });
+
   it('evicts old active canvases and cancels their pending frame callbacks', async () => {
     const canvases = new Map<number, HTMLCanvasElement>();
     const listeners = new Map<string, (event: unknown) => void>();
