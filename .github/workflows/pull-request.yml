@@ -234,8 +234,9 @@ jobs:
         if: >-
           ${{ !cancelled() &&
               hashFiles('replay-inputs/rrweb-revision-base/rrweb.umd.cjs') != '' &&
-              hashFiles('replay-report/candidate/compatibility/url-meta-navigation-events.json') != '' &&
-              hashFiles('replay-report/candidate/compatibility/url-meta-navigation.webm') != '' }}
+              hashFiles('replay-report/base/compatibility/url-navigation/url-meta-navigation-events.json') != '' &&
+              hashFiles('replay-report/candidate/compatibility/url-navigation/url-meta-navigation-events.json') != '' &&
+              hashFiles('replay-report/candidate/compatibility/url-navigation/url-meta-navigation.webm') != '' }}
         continue-on-error: true
         timeout-minutes: 6
         run: |
@@ -244,9 +245,10 @@ jobs:
             sudo apt-get install -y --no-install-recommends ffmpeg
           fi
           node packages/rrweb/test/e2e/replay-comparison-video.mjs \
-            replay-inputs replay-report/candidate/compatibility/url-meta-navigation-events.json \
-            replay-report/candidate/compatibility/url-meta-navigation.webm \
-            replay-report/candidate/compatibility/url-meta-navigation-comparison.webm
+            replay-inputs replay-report/candidate/compatibility/url-navigation/url-meta-navigation-events.json \
+            replay-report/candidate/compatibility/url-navigation/url-meta-navigation.webm \
+            replay-report/candidate/compatibility/url-navigation/url-meta-navigation-comparison.webm \
+            replay-report/base/compatibility/url-navigation/url-meta-navigation-events.json
 
       - name: Upload replay and comparison artifacts
         id: upload-replay
@@ -284,8 +286,8 @@ jobs:
         uses: ./.github/actions/upload-replay-videos
         with:
           test-id: url-navigation
-          comparison: replay-report/candidate/compatibility/url-meta-navigation-comparison.webm
-          source: replay-report/candidate/compatibility/url-meta-navigation.webm
+          comparison: replay-report/candidate/compatibility/url-navigation/url-meta-navigation-comparison.webm
+          source: replay-report/candidate/compatibility/url-navigation/url-meta-navigation.webm
 
       - name: Upload base checkpoint screenshot
         id: base-screenshot
@@ -316,6 +318,8 @@ jobs:
         run: |
           test -s replay-report/candidate/fixture-interaction.webm
           test -s replay-report/replay-comparison.webm
+          test -s replay-report/candidate/compatibility/url-navigation/url-meta-navigation.webm
+          test -s replay-report/candidate/compatibility/url-navigation/url-meta-navigation-comparison.webm
 
   replay-comment:
     name: Link replay artifacts
