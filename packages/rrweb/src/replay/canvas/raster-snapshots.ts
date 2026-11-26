@@ -52,6 +52,20 @@ function isPositiveDimension(value: unknown, max: number): value is number {
   );
 }
 
+function getCanvasMutationId(event: unknown): number | null {
+  if (
+    !isRecord(event) ||
+    event.type !== EventType.IncrementalSnapshot ||
+    !isRecord(event.data) ||
+    event.data.source !== IncrementalSource.CanvasMutation ||
+    !Number.isSafeInteger(event.data.id) ||
+    (event.data.id as number) <= 0
+  ) {
+    return null;
+  }
+  return event.data.id as number;
+}
+
 function readFourCC(bytes: string, offset: number): string {
   return bytes.slice(offset, offset + 4);
 }
@@ -268,19 +282,15 @@ function isExpectedStaticWebP(
 
 /** Accept only the exact supported clear-then-draw 2D image snapshot shape. */
 export function getRasterCanvasSnapshot(event: unknown): RasterSnapshot | null {
-  if (
-    !isRecord(event) ||
-    event.type !== EventType.IncrementalSnapshot ||
-    !isRecord(event.data)
-  ) {
+  const id = getCanvasMutationId(event);
+  if (id === null || !isRecord(event) || !isRecord(event.data)) {
     return null;
   }
   const { data } = event;
   if (
     !hasOnlyKeys(data, ['source', 'id', 'type', 'commands']) ||
     data.source !== IncrementalSource.CanvasMutation ||
-    data.type !== CanvasContext['2D'] ||
-    !Number.isSafeInteger(data.id)
+    data.type !== CanvasContext['2D']
   ) {
     return null;
   }
@@ -364,7 +374,7 @@ export function getRasterCanvasSnapshot(event: unknown): RasterSnapshot | null {
   if (!isExpectedStaticWebP(base64, width, height)) {
     return null;
   }
-  return { id: data.id as number, width, height, base64 };
+  return { id, width, height, base64 };
 }
 
 /**
@@ -662,6 +672,7 @@ export function attachRasterCanvasSnapshots(replayer: Replayer): () => void {
       return;
     }
     reconciliationScheduled = true;
+    // Run after rrdom's Flush diff so it cannot restore removed fallback images.
     void Promise.resolve().then(() => {
       reconciliationScheduled = false;
       reconcileFallbackDom();
@@ -672,8 +683,16 @@ export function attachRasterCanvasSnapshots(replayer: Replayer): () => void {
     // The state map is capped, so pruning on ordinary events keeps lifecycle
     // cleanup prompt without making replay work proportional to page size.
     pruneDetachedCanvases();
+    const canvasId = getCanvasMutationId(rawEvent);
     const snapshot = getRasterCanvasSnapshot(rawEvent);
-    if (!snapshot || disposed) {
+    if (disposed) {
+      return;
+    }
+    if (!snapshot) {
+      const state = canvasId === null ? undefined : statesById.get(canvasId);
+      if (canvasId !== null && state) {
+        removeState(canvasId, state);
+      }
       return;
     }
     const state = getStateWithinBudget(

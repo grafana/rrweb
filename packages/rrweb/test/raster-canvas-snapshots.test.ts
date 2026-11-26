@@ -46,7 +46,11 @@ function encodeWebPChunks(chunks: WebPChunk[]): string {
     bytes.set(payload, offset + 8);
     offset += 8 + payload.length + (payload.length & 1);
   }
-  return btoa(String.fromCharCode(...bytes));
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
 }
 
 function makeVp8lPayload(
@@ -186,6 +190,8 @@ describe('raster canvas snapshots', () => {
       base64: WEBP_BASE64,
     });
     expect(getRasterCanvasSnapshot(makeEvent({ type: 1 }))).toBeNull();
+    expect(getRasterCanvasSnapshot(makeEvent({ id: 0 }))).toBeNull();
+    expect(getRasterCanvasSnapshot(makeEvent({ id: -1 }))).toBeNull();
     expect(
       getRasterCanvasSnapshot(
         makeEvent({ commands: [{ property: 'fillRect', args: [0, 0, 1, 1] }] }),
@@ -263,6 +269,17 @@ describe('raster canvas snapshots', () => {
         ),
       ),
     ).toBeNull();
+
+    for (const profileLength of [256 * 1024, 256 * 1024 + 1]) {
+      const snapshot = getRasterCanvasSnapshot(
+        makeEventWithWebP(
+          makeExtendedWebPBase64(0x20, 640, 480, [
+            { type: 'ICCP', payload: new Uint8Array(profileLength) },
+          ]),
+        ),
+      );
+      expect(snapshot !== null).toBe(profileLength === 256 * 1024);
+    }
 
     for (const invalidFrameTag of [0x31, 0x20, 0x50]) {
       expect(
@@ -513,6 +530,12 @@ describe('raster canvas snapshots', () => {
       await Promise.resolve();
       expect(image?.isConnected).toBe(true);
 
+      const unsupportedEvent = makeEvent();
+      (unsupportedEvent.data as any).commands[1].property = 'fillRect';
+      listener?.(unsupportedEvent);
+      expect(image?.isConnected).toBe(false);
+      expect(canvas.hasAttribute('data-rrweb-raster-snapshot')).toBe(false);
+
       listener?.(makeEvent());
       flushFrames();
       expect(pendingDecodes).toHaveLength(3);
@@ -523,6 +546,7 @@ describe('raster canvas snapshots', () => {
       pendingDecodes[2].resolve();
       await Promise.resolve();
       expect(image?.isConnected).toBe(false);
+      expect(canvas.querySelector('img')).toBeNull();
     } finally {
       detach?.();
       if (previousDecode) {
