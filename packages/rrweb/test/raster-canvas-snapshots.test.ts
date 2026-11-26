@@ -619,6 +619,13 @@ describe('raster canvas snapshots', () => {
       (unsupportedEvent.data as any).commands[1].property = 'fillRect';
       listeners.get(ReplayerEvents.EventCast)?.(unsupportedEvent);
       expect(image?.isConnected).toBe(true);
+      // Simulate the synchronous Flush diff restoring the fallback child.
+      listeners.get(ReplayerEvents.Flush)?.();
+      if (image) {
+        image.remove();
+        canvas.append(image);
+      }
+      expect(image?.isConnected).toBe(true);
       await Promise.resolve();
       expect(image?.isConnected).toBe(false);
       expect(canvas.hasAttribute('data-rrweb-raster-snapshot')).toBe(false);
