@@ -229,6 +229,25 @@ jobs:
             replay-inputs replay-report/candidate/events.json \
             replay-report/candidate/fixture-interaction.webm replay-report/replay-comparison.webm
 
+      - name: Render URL navigation three-view video
+        id: render-url-meta-comparison
+        if: >-
+          ${{ !cancelled() &&
+              hashFiles('replay-inputs/rrweb-revision-base/rrweb.umd.cjs') != '' &&
+              hashFiles('replay-report/candidate/compatibility/url-meta-navigation-events.json') != '' &&
+              hashFiles('replay-report/candidate/compatibility/url-meta-navigation.webm') != '' }}
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          node packages/rrweb/test/e2e/replay-comparison-video.mjs \
+            replay-inputs replay-report/candidate/compatibility/url-meta-navigation-events.json \
+            replay-report/candidate/compatibility/url-meta-navigation.webm \
+            replay-report/candidate/compatibility/url-meta-navigation-comparison.webm
+
       - name: Upload replay and comparison artifacts
         id: upload-replay
         if: ${{ !cancelled() }}
@@ -265,6 +284,7 @@ jobs:
         uses: ./.github/actions/upload-replay-videos
         with:
           test-id: url-navigation
+          comparison: replay-report/candidate/compatibility/url-meta-navigation-comparison.webm
           source: replay-report/candidate/compatibility/url-meta-navigation.webm
 
       - name: Upload base checkpoint screenshot

@@ -371,7 +371,9 @@ async function captureUrlMetaNavigation(browser, bundle) {
           nav { display: flex; gap: 24px; margin: 24px 0; }
           a { color: #075985; font-weight: 700; }
           main { min-height: 500px; padding: 24px; background: #e0f2fe; }
+          #capture-cover { position: fixed; inset: 0; z-index: 10; background: black; }
         </style>
+        <div id="capture-cover" aria-hidden="true"></div>
         <header>
           <strong>URL Meta navigation</strong>
           <output id="current-url"></output>
@@ -401,8 +403,12 @@ async function captureUrlMetaNavigation(browser, bundle) {
         window.addEventListener('hashchange', updateDisplayedUrl);
       });
       const mainFrameUrls = [page.url()];
+      const sourceNavigations = [{ timestamp: Date.now(), href: page.url() }];
       page.on('framenavigated', (frame) => {
-        if (frame === page.mainFrame()) mainFrameUrls.push(frame.url());
+        if (frame === page.mainFrame()) {
+          mainFrameUrls.push(frame.url());
+          sourceNavigations.push({ timestamp: Date.now(), href: frame.url() });
+        }
       });
       await page.addScriptTag({ path: bundle });
       await page.evaluate(() => {
@@ -414,6 +420,12 @@ async function captureUrlMetaNavigation(browser, bundle) {
       await page.waitForFunction(() =>
         window.__events.some((event) => event.type === 2),
       );
+      await page.waitForTimeout(250);
+      await page
+        .locator('#capture-cover')
+        .evaluate((element) => element.remove());
+      const sourceStartTimestamp = await page.evaluate(() => Date.now());
+      await page.waitForTimeout(500);
 
       await page.locator('#transactions-link').click();
       await page.locator('#navigation-heading').evaluate((element) => {
@@ -422,6 +434,7 @@ async function captureUrlMetaNavigation(browser, bundle) {
       await page.locator('#navigation-note').evaluate((element) => {
         element.textContent = 'Mutation after first URL change';
       });
+      await page.waitForTimeout(700);
       await page.locator('#activity-link').click();
       await page.locator('#navigation-heading').evaluate((element) => {
         element.textContent = 'Activity opened';
@@ -429,6 +442,7 @@ async function captureUrlMetaNavigation(browser, bundle) {
       await page.locator('#navigation-note').evaluate((element) => {
         element.textContent = 'Mutation after second URL change';
       });
+      await page.waitForTimeout(700);
       await page.evaluate(() => window.history.back());
       await page.waitForFunction(
         () => window.location.href === 'http://fixture.test/transactions',
@@ -439,7 +453,7 @@ async function captureUrlMetaNavigation(browser, bundle) {
       await page.locator('#navigation-note').evaluate((element) => {
         element.textContent = 'Mutation after browser back';
       });
-      await page.waitForTimeout(100);
+      await page.waitForTimeout(700);
       const recording = await page.evaluate(() => {
         window.rrweb.record.addCustomEvent('checkpoint', {
           label: 'after-url-navigation',
@@ -504,7 +518,12 @@ async function captureUrlMetaNavigation(browser, bundle) {
         join(artifactDir, `${name}-recording-checkpoints.json`),
         `${JSON.stringify(evidence, null, 2)}\n`,
       );
-      return { ...recording, evidence };
+      return {
+        ...recording,
+        evidence,
+        sourceNavigations,
+        sourceStartTimestamp,
+      };
     },
     { recordVideo: true },
   );
@@ -579,6 +598,8 @@ const results = [];
 let failure;
 let browserVersion;
 let functionalStatus = 'failed';
+let urlMetaSourceNavigations = [];
+let urlMetaSourceStartTimestamp;
 const baselineRoot = process.env['RRWEB_BASELINE_ROOT'] || undefined;
 const checkoutRoot = baselineRoot ?? packageDir;
 const checkoutCommit = (
@@ -599,6 +620,8 @@ try {
 
   if (!baselineRoot) {
     const navigationRecording = await captureUrlMetaNavigation(browser, bundle);
+    urlMetaSourceNavigations = navigationRecording.sourceNavigations;
+    urlMetaSourceStartTimestamp = navigationRecording.sourceStartTimestamp;
     results.push(
       await replayUrlMetaNavigation(browser, bundle, navigationRecording),
     );
@@ -656,6 +679,8 @@ try {
         checkoutCommit,
         functionalStatus,
         browserVersion,
+        sourceNavigations: urlMetaSourceNavigations,
+        sourceStartTimestamp: urlMetaSourceStartTimestamp,
         results,
         error: failure?.message,
         status: failure ? 'failed' : 'passed',

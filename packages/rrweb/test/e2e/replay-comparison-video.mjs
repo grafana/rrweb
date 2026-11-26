@@ -17,7 +17,7 @@ const framesPerSecond = 12;
 const panelWidth = 960;
 const headerHeight = 48;
 const events = JSON.parse(await readFile(recordingPath, 'utf8')).map(
-  ({ event }) => event,
+  (recordedEvent) => recordedEvent.event ?? recordedEvent,
 );
 const replayNavigations = events.filter((event) => event.type === 4);
 const [meta] = replayNavigations;
@@ -27,7 +27,7 @@ assert.ok(
   'Video requires a recording with viewport metadata and a full snapshot',
 );
 const { width, height } = meta.data;
-const { sourceNavigations = [] } = JSON.parse(
+const { sourceNavigations = [], sourceStartTimestamp } = JSON.parse(
   await readFile(join(dirname(recordingPath), 'summary.json'), 'utf8').catch(
     (error) => {
       if (error.code === 'ENOENT') return '{}';
@@ -36,7 +36,9 @@ const { sourceNavigations = [] } = JSON.parse(
   ),
 );
 const duration = events.at(-1).timestamp - events[0].timestamp;
-const firstFrame = fullSnapshot.timestamp - events[0].timestamp + 32;
+const firstFrame = Number.isFinite(sourceStartTimestamp)
+  ? sourceStartTimestamp - events[0].timestamp
+  : fullSnapshot.timestamp - events[0].timestamp + 32;
 assert.ok(
   Number.isFinite(duration) && duration > firstFrame,
   'Video requires a timed recording',
