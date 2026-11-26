@@ -33,8 +33,10 @@ The standalone `canvas-raster` fixture records a full-viewport perspective
 scene as twelve static WebP snapshots over eleven seconds. Its comparison keeps
 snapshot playback off for the base, enables it for the candidate, checks visible
 pixels and the unchanged script-blocked sandbox, and holds the last frame for
-inspection. It publishes its comparison and source videos under its own test
-ID, so the replay comment links it as a separate row.
+inspection. The source viewport and recorded video size are both 1280×720; the
+local comparison render is 13.25 seconds. It publishes its comparison and
+source videos under its own test ID, so the replay comment links it as a
+separate row.
 
 Run the fixture locally after building rrweb:
 

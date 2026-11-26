@@ -43,8 +43,8 @@ const rasterSnapshotEvents = events.filter(
 if (canvasRaster) {
   assert.equal(
     rasterSnapshotEvents.length,
-    2,
-    'Canvas raster video requires two static WebP snapshots',
+    12,
+    'Canvas raster video requires twelve static WebP snapshots',
   );
   assert.equal(
     rasterSnapshotEvents[0].data.id,
@@ -73,7 +73,11 @@ assert.ok(
   'Video requires a recording with viewport metadata and a full snapshot',
 );
 const { width, height } = meta.data;
-const { sourceNavigations = [] } = JSON.parse(
+const {
+  sourceNavigations = [],
+  sourceVideoDurationMs = 0,
+  sourceStartOffsetMs = 0,
+} = JSON.parse(
   await readFile(join(dirname(recordingPath), 'summary.json'), 'utf8').catch(
     (error) => {
       if (error.code === 'ENOENT') return '{}';
@@ -81,7 +85,16 @@ const { sourceNavigations = [] } = JSON.parse(
     },
   ),
 );
-const duration = events.at(-1).timestamp - events[0].timestamp;
+const duration = Math.max(
+  events.at(-1).timestamp - events[0].timestamp,
+  sourceVideoDurationMs,
+);
+if (canvasRaster) {
+  assert.ok(
+    duration >= 10_000,
+    'Canvas raster comparison must be at least ten seconds',
+  );
+}
 const firstFrame = fullSnapshot.timestamp - events[0].timestamp + 32;
 assert.ok(
   Number.isFinite(duration) && duration > firstFrame,
@@ -132,9 +145,13 @@ async function openLabels(browser) {
       background: #263449; color: #e2e8f0; font: 16px monospace;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   </style>
-  <section>Source<span class="address"></span></section>
+  <section>${
+    canvasRaster ? 'Source capture' : 'Source'
+  }<span class="address"></span></section>
   <section>Base replay<span class="address"></span></section>
-  <section>Opt-in replay<span class="address"></span></section>`);
+  <section>${
+    canvasRaster ? 'Opt-in replay' : 'Candidate replay'
+  }<span class="address"></span></section>`);
   return page;
 }
 
@@ -147,6 +164,7 @@ async function openPlayer(browser, revision, label) {
   await context.route('**/*', (route) => route.abort());
   const page = await context.newPage();
   const errors = [];
+  let initialRasterPixels;
   page.on('pageerror', (error) => errors.push(error.message));
   await page.setContent(`<!doctype html><style>
     html, body { margin: 0; overflow: hidden; background: #f3f5f9; }
@@ -203,7 +221,7 @@ async function openPlayer(browser, revision, label) {
       null,
       { timeout: 5000 },
     );
-    await assertRasterPixels(page, 'initial');
+    initialRasterPixels = await assertRasterPixels(page, 'initial');
   } else if (canvasRaster) {
     assert.equal(
       await iframe.evaluate((element) =>
@@ -217,7 +235,7 @@ async function openPlayer(browser, revision, label) {
       'Base replay should leave the default-off raster canvas blank',
     );
   }
-  return { page, errors, label };
+  return { page, errors, label, initialRasterPixels };
 }
 
 async function assertRasterPixels(page, frame) {
@@ -235,44 +253,80 @@ async function assertRasterPixels(page, frame) {
       sampler.height = screenshotImage.naturalHeight;
       const context = sampler.getContext('2d');
       context.drawImage(screenshotImage, 0, 0);
-      return [
+      const corners = [
         context.getImageData(bounds.x + 8, bounds.y + 8, 1, 1).data,
         context.getImageData(bounds.right - 8, bounds.y + 8, 1, 1).data,
       ].map((sample) => Array.from(sample));
+      const center = [];
+      for (let y = 0.3; y <= 0.7; y += 0.08) {
+        for (let x = 0.35; x <= 0.65; x += 0.06) {
+          center.push(
+            Array.from(
+              context.getImageData(
+                Math.round(bounds.x + bounds.width * x),
+                Math.round(bounds.y + bounds.height * y),
+                1,
+                1,
+              ).data,
+            ),
+          );
+        }
+      }
+      return { corners, center };
     },
     {
       screenshotBase64: screenshot.toString('base64'),
       canvasId: rasterCanvasId,
     },
   );
-  const [left, right] = pixels;
-  if (frame === 'initial') {
-    assert.ok(
-      left[2] > 150 && left[0] < 100,
-      'initial left pixel should be blue',
-    );
-    assert.ok(
-      right[0] > 150 && right[2] < 100,
-      'initial right pixel should be orange',
-    );
-  } else {
-    assert.ok(
-      left[1] > 100 && left[0] < 50,
-      'updated left pixel should be green',
-    );
-    assert.ok(
-      right[2] > 150 && right[0] > 80,
-      'updated right pixel should be purple',
-    );
-  }
+  const [left, right] = pixels.corners;
+  assert.ok(
+    left[2] > 150 && left[0] < 100,
+    `${frame} left pixel should be blue`,
+  );
+  assert.ok(
+    right[0] > 150 && right[2] < 100,
+    `${frame} right pixel should be orange`,
+  );
+  return pixels.center;
 }
 
-const sourceStart = canvasRaster ? 0 : await findSourceStart();
+const sourceStart = canvasRaster
+  ? sourceStartOffsetMs / 1000
+  : await findSourceStart();
 await mkdir(dirname(output), { recursive: true });
 const scratch = await mkdtemp(join(dirname(output), '.replay-frames-'));
 let browser;
 try {
   browser = await chromium.launch();
+  if (canvasRaster) {
+    const { stdout } = await run(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=width,height',
+        '-of',
+        'json',
+        sourceVideo,
+      ],
+      { timeout: 20_000 },
+    );
+    const [sourceStream] = JSON.parse(stdout).streams;
+    assert.equal(
+      sourceStream.width,
+      width,
+      'Source video width must match replay viewport',
+    );
+    assert.equal(
+      sourceStream.height,
+      height,
+      'Source video height must match replay viewport',
+    );
+  }
   const players = await Promise.all([
     openPlayer(browser, 'base', 'Base'),
     openPlayer(browser, 'candidate', 'Candidate'),
@@ -363,7 +417,15 @@ try {
       false,
       'Base replay should keep the default-off raster canvas blank',
     );
-    await assertRasterPixels(players[1].page, 'updated');
+    const finalRasterPixels = await assertRasterPixels(
+      players[1].page,
+      'final',
+    );
+    assert.notDeepEqual(
+      finalRasterPixels,
+      players[1].initialRasterPixels,
+      'Later raster snapshots should visibly change the rendered canvas',
+    );
   }
   for (const { label, errors } of players) {
     assert.deepEqual(errors, [], `${label} replay raised page errors`);
@@ -416,6 +478,25 @@ try {
     ],
     { timeout: 180_000 },
   );
+  if (canvasRaster) {
+    const { stdout } = await run(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-show_entries',
+        'format=duration',
+        '-of',
+        'json',
+        staged,
+      ],
+      { timeout: 20_000 },
+    );
+    assert.ok(
+      Number(JSON.parse(stdout).format.duration) >= 10,
+      'Rendered canvas raster video must be at least ten seconds',
+    );
+  }
   await rename(staged, output);
   console.log(
     `Rendered ${frameCount} comparison frames at normal speed (source starts at ${sourceStart}s) to ${output}`,
