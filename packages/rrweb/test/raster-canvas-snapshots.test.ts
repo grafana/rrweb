@@ -245,6 +245,25 @@ describe('raster canvas snapshots', () => {
       ),
     ).toBeNull();
 
+    expect(
+      getRasterCanvasSnapshot(
+        makeEventWithWebP(
+          makeExtendedWebPBase64(0x20, 640, 480, [
+            { type: 'ICCP', payload: new Uint8Array([1]) },
+          ]),
+        ),
+      ),
+    ).not.toBeNull();
+    expect(
+      getRasterCanvasSnapshot(
+        makeEventWithWebP(
+          makeExtendedWebPBase64(0x20, 640, 480, [
+            { type: 'ICCP', payload: new Uint8Array() },
+          ]),
+        ),
+      ),
+    ).toBeNull();
+
     for (const invalidFrameTag of [0x31, 0x20, 0x50]) {
       expect(
         getRasterCanvasSnapshot(

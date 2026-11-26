@@ -186,6 +186,7 @@ describe('replayer', function () {
       useVirtualDom?: boolean,
       replayCanvasSnapshots = true,
       includeToggleFrames = false,
+      includeEvictionCanvases = false,
     ) => {
       const useVirtualDomOption =
         useVirtualDom === undefined
@@ -197,13 +198,40 @@ describe('replayer', function () {
             ...canvasSpecs.map((spec) => makeEvent(spec.id, secondBase64, 200)),
           `
         : '';
+      const evictionFrameEvents = includeEvictionCanvases
+        ? `...canvasSpecs.slice(3).map((spec) => makeEvent(spec.id, secondBase64, 150)),`
+        : '';
+      const evictionMutationEvent = includeEvictionCanvases
+        ? `{
+            type: EventType.IncrementalSnapshot,
+            timestamp: 125,
+            data: {
+              source: IncrementalSource.Mutation,
+              texts: [],
+              attributes: [],
+              removes: [],
+              adds: [],
+            },
+          },`
+        : '';
       return page.evaluate(`
         (async () => {
           const { Replayer, EventType, IncrementalSource, ReplayerEvents } = rrweb;
-          const canvasSpecs = [
+          const initialCanvasSpecs = [
             { id: 9001, name: 'styled-snapshot-canvas', style: 'width:40px;height:25px' },
             { id: 9002, name: 'intrinsic-snapshot-canvas', style: '' },
             { id: 9003, name: 'responsive-snapshot-canvas', style: 'display:block;width:50%;height:auto', parentStyle: 'width:200px' },
+          ];
+          const canvasSpecs = [
+            ...initialCanvasSpecs,
+            ${
+              includeEvictionCanvases
+                ? `
+              { id: 9004, name: 'evicted-snapshot-canvas-1', style: '' },
+              { id: 9005, name: 'evicted-snapshot-canvas-2', style: '' },
+            `
+                : ''
+            }
           ];
           const makeBase64 = (leftColor, rightColor) => {
             const source = document.createElement('canvas');
@@ -287,14 +315,33 @@ describe('replayer', function () {
           const replayEvents = [
             { type: EventType.Meta, timestamp: 1, data: { href: location.href, width: 320, height: 300 } },
             initialSnapshot,
-            ...canvasSpecs.map((spec) => makeEvent(spec.id, firstBase64, 50)),
-            ...canvasSpecs.map((spec) => makeEvent(spec.id, secondBase64, 100)),
+            {
+              type: EventType.IncrementalSnapshot,
+              timestamp: 25,
+              data: {
+                source: IncrementalSource.Mutation,
+                texts: [],
+                attributes: [],
+                removes: [],
+                adds: [],
+              },
+            },
+            ...initialCanvasSpecs.map((spec) => makeEvent(spec.id, firstBase64, 50)),
+            ...initialCanvasSpecs.map((spec) => makeEvent(spec.id, secondBase64, 100)),
+            ${evictionMutationEvent}
             ${toggleFrameEvents}
+            ${evictionFrameEvents}
           ];
           const replayer = new Replayer(replayEvents, {
             replayCanvasSnapshots: ${String(
               replayCanvasSnapshots,
             )}${useVirtualDomOption},
+          });
+          let virtualDomActivated = false;
+          replayer.on(ReplayerEvents.EventCast, (event) => {
+            if (event.data?.source === IncrementalSource.Mutation) {
+              virtualDomActivated = replayer.usingVirtualDom;
+            }
           });
           const rebuilt = new Promise((resolve) => {
             replayer.on(ReplayerEvents.FullsnapshotRebuilded, resolve);
@@ -303,9 +350,9 @@ describe('replayer', function () {
           await rebuilt;
 
           const doc = replayer.iframe.contentDocument;
-          const waitForImages = async () => {
+          const waitForImages = async (specs = initialCanvasSpecs) => {
             await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-            const images = canvasSpecs.map((spec) =>
+            const images = specs.map((spec) =>
               doc.getElementById(spec.name).querySelector('img'),
             );
             if (images.some((image) => !image)) {
@@ -350,6 +397,7 @@ describe('replayer', function () {
           };
           return {
             sandbox: replayer.iframe.getAttribute('sandbox'),
+            virtualDomActivated,
             firstBase64,
             secondBase64,
             initialImagesFound,
@@ -450,6 +498,7 @@ describe('replayer', function () {
       ).not.toBeNull();
       expect(firstFrame.initialImagesFound).toBe(true);
       expect(firstFrame.sandbox).toBe('allow-same-origin');
+      expect(firstFrame.virtualDomActivated).toBe(useVirtualDom !== false);
       expect(firstFrame.canvasRects).toEqual([
         {
           width: 40,
@@ -519,8 +568,84 @@ describe('replayer', function () {
       await assertVisibleColors('green');
       await page.evaluate('window.__rrwebRasterSeek(75)');
       await assertVisibleColors('red');
+      const rewoundToStart = await page.evaluate(async () => {
+        const replayer = window.__rrwebRasterReplayer;
+        replayer.pause(0);
+        await new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        );
+        const doc = replayer.iframe.contentDocument;
+        return {
+          images: doc.querySelectorAll('canvas img').length,
+          markedCanvases: doc.querySelectorAll(
+            'canvas[data-rrweb-raster-snapshot]',
+          ).length,
+          fallbackStyles: [...doc.head.querySelectorAll('style')].filter(
+            (style) => style.textContent.includes('data-rrweb-raster-snapshot'),
+          ).length,
+        };
+      });
+      expect(rewoundToStart).toEqual({
+        images: 0,
+        markedCanvases: 0,
+        fallbackStyles: 0,
+      });
       await page.evaluate('window.__rrwebRasterReplayer.destroy()');
     }
+
+    const boundedEviction = await setupCanvasReplay(
+      undefined,
+      true,
+      false,
+      true,
+    );
+    expect(boundedEviction.virtualDomActivated).toBe(true);
+    await page.evaluate('window.__rrwebRasterReplayer.pause(175)');
+    await page.waitForFunction(
+      () => {
+        const doc = window.__rrwebRasterReplayer.iframe.contentDocument;
+        return doc.querySelectorAll('canvas img').length === 4;
+      },
+      { timeout: 5000 },
+    );
+    const evictedFrames = await page.evaluate(() => {
+      const doc = window.__rrwebRasterReplayer.iframe.contentDocument;
+      return {
+        images: doc.querySelectorAll('canvas img').length,
+        firstCanvasHasImage: Boolean(
+          doc.getElementById('styled-snapshot-canvas').querySelector('img'),
+        ),
+        activeCanvasIds: [
+          ...doc.querySelectorAll('canvas[data-rrweb-raster-snapshot]'),
+        ].map((canvas) => canvas.id),
+      };
+    });
+    expect(evictedFrames).toEqual({
+      images: 4,
+      firstCanvasHasImage: false,
+      activeCanvasIds: [
+        'intrinsic-snapshot-canvas',
+        'responsive-snapshot-canvas',
+        'evicted-snapshot-canvas-1',
+        'evicted-snapshot-canvas-2',
+      ],
+    });
+    const rewindClearedFrames = await page.evaluate(async () => {
+      const replayer = window.__rrwebRasterReplayer;
+      replayer.pause(0);
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      );
+      const doc = replayer.iframe.contentDocument;
+      return {
+        images: doc.querySelectorAll('canvas img').length,
+        markedCanvases: doc.querySelectorAll(
+          'canvas[data-rrweb-raster-snapshot]',
+        ).length,
+      };
+    });
+    expect(rewindClearedFrames).toEqual({ images: 0, markedCanvases: 0 });
+    await page.evaluate('window.__rrwebRasterReplayer.destroy()');
 
     const disabledInitially = await setupCanvasReplay(undefined, false, true);
     expect(disabledInitially.initialImagesFound).toBe(false);

@@ -135,6 +135,13 @@ jobs:
         run: npm run test:replay-review -w @grafana/rrweb
         timeout-minutes: 10
 
+      - name: Record canvas raster visual case
+        if: ${{ !cancelled() && matrix.revision == 'candidate' && steps.fidelity.outcome != 'skipped' }}
+        run: npm run test:replay-canvas-raster -w @grafana/rrweb
+        timeout-minutes: 5
+        env:
+          RRWEB_REPLAY_ARTIFACT_DIR: ${{ env.RRWEB_REPLAY_ARTIFACT_DIR }}/canvas-raster
+
       - name: Checkout pinned Faro Web SDK
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         id: faro-checkout
@@ -229,6 +236,25 @@ jobs:
             replay-inputs replay-report/candidate/events.json \
             replay-report/candidate/fixture-interaction.webm replay-report/replay-comparison.webm
 
+      - name: Render canvas raster comparison video
+        if: >-
+          ${{ !cancelled() &&
+              hashFiles('replay-inputs/rrweb-revision-base/rrweb.umd.cjs') != '' &&
+              hashFiles('replay-report/candidate/canvas-raster/events.json') != '' &&
+              hashFiles('replay-report/candidate/canvas-raster/source.webm') != '' }}
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          node packages/rrweb/test/e2e/replay-comparison-video.mjs \
+            replay-inputs replay-report/candidate/canvas-raster/events.json \
+            replay-report/candidate/canvas-raster/source.webm \
+            replay-report/canvas-raster/canvas-raster-${GITHUB_RUN_ATTEMPT}.webm \
+            canvas-raster
+
       - name: Upload replay and comparison artifacts
         id: upload-replay
         if: ${{ !cancelled() }}
@@ -260,6 +286,14 @@ jobs:
           comparison: replay-report/replay-comparison.webm
           source: replay-report/candidate/fixture-interaction.webm
 
+      - name: Publish Canvas raster videos
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/upload-replay-videos
+        with:
+          test-id: canvas-raster
+          comparison: replay-report/canvas-raster/canvas-raster-${{ github.run_attempt }}.webm
+          source: replay-report/candidate/canvas-raster/source.webm
+
       - name: Upload base checkpoint screenshot
         id: base-screenshot
         if: ${{ !cancelled() }}
@@ -289,6 +323,9 @@ jobs:
         run: |
           test -s replay-report/candidate/fixture-interaction.webm
           test -s replay-report/replay-comparison.webm
+          test -s replay-report/candidate/canvas-raster/events.json
+          test -s replay-report/candidate/canvas-raster/source.webm
+          test -s replay-report/canvas-raster/canvas-raster-${GITHUB_RUN_ATTEMPT}.webm
 
   replay-comment:
     name: Link replay artifacts
