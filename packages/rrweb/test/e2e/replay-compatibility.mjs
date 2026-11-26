@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
+import { runImageBlurE2E } from './image-blur-compatibility.mjs';
 import { chromium } from 'playwright';
 
 const run = promisify(execFile);
@@ -54,7 +55,7 @@ function publicState(doc) {
   };
 }
 
-async function browserCase(browser, name, callback) {
+async function browserCase(browser, name, callback, options = {}) {
   const context = await browser.newContext({
     viewport: { width: 1280, height: 900 },
     serviceWorkers: 'block',
@@ -67,6 +68,8 @@ async function browserCase(browser, name, callback) {
   });
   const page = await context.newPage();
   const errors = [];
+  const imageRequestCounts = new Map();
+  const blockedImageRequests = [];
   let passed = false;
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => {
@@ -74,7 +77,23 @@ async function browserCase(browser, name, callback) {
       errors.push(message.text());
   });
   await page.route('**/*', async (route) => {
-    if (route.request().url() === 'http://fixture.test/') {
+    const requestURL = new URL(route.request().url());
+    const imageKey = `${requestURL.pathname}${requestURL.search}`;
+    const imageBody = options.imageResponses?.get(imageKey);
+    if (imageBody !== undefined) {
+      const requests = imageRequestCounts.get(imageKey) ?? 0;
+      imageRequestCounts.set(imageKey, requests + 1);
+      if (requests > 0) {
+        // Replays must use rr_dataURL instead of fetching the original image.
+        blockedImageRequests.push(imageKey);
+        await route.abort();
+      } else {
+        await route.fulfill({
+          contentType: 'image/svg+xml',
+          body: imageBody,
+        });
+      }
+    } else if (route.request().url() === 'http://fixture.test/') {
       await route.fulfill({
         contentType: 'text/html',
         body: '<!doctype html><title>rrweb test</title><div id="player"></div>',
@@ -86,7 +105,9 @@ async function browserCase(browser, name, callback) {
   });
   try {
     await page.goto('http://fixture.test/');
-    const result = await callback(page);
+    const result = await callback(page, {
+      blockedImageRequests,
+    });
     assert.deepEqual(errors, [], `${name}: browser errors or replay warnings`);
     passed = true;
     return result;
@@ -362,6 +383,10 @@ try {
   functionalStatus = 'passed';
 
   if (!baselineRoot) {
+    results.push(
+      ...(await runImageBlurE2E({ browser, bundle, browserCase, artifactDir })),
+    );
+
     const { stdout } = await run('npm', [
       'pack',
       released.package,
