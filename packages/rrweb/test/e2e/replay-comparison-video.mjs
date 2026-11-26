@@ -95,7 +95,8 @@ if (canvasRaster) {
     'Canvas raster comparison must be at least ten seconds',
   );
 }
-const firstFrame = fullSnapshot.timestamp - events[0].timestamp + 32;
+const firstFrame =
+  fullSnapshot.timestamp - events[0].timestamp + 32 + (canvasRaster ? 100 : 0);
 assert.ok(
   Number.isFinite(duration) && duration > firstFrame,
   'Video requires a timed recording',
