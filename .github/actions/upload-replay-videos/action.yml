@@ -1,0 +1,53 @@
+name: Upload replay videos for one test
+description: Publish each WebM as a direct download and associate it with a test ID.
+inputs:
+  test-id:
+    description: Lowercase test ID using letters, digits, and hyphens.
+    required: true
+  comparison:
+    description: Path to the three-view WebM.
+    required: false
+  source:
+    description: Path to the original Playwright WebM.
+    required: false
+runs:
+  using: composite
+  steps:
+    - name: Name the videos for this run attempt
+      id: media
+      shell: bash
+      env:
+        TEST_ID: ${{ inputs.test-id }}
+        COMPARISON: ${{ inputs.comparison }}
+        SOURCE: ${{ inputs.source }}
+      run: |
+        [[ "$TEST_ID" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]
+        mkdir -p "$RUNNER_TEMP/rrweb-replay-videos"
+        stage() {
+          local kind="$1" input="$2"
+          if [ -s "$input" ]; then
+            local target="$RUNNER_TEMP/rrweb-replay-videos/replay-video-$TEST_ID-$kind-$GITHUB_RUN_ATTEMPT.webm"
+            cp "$input" "$target"
+            printf '%s=%s\n' "$kind" "$target" >> "$GITHUB_OUTPUT"
+          fi
+        }
+        stage comparison "$COMPARISON"
+        stage source "$SOURCE"
+
+    - name: Upload comparison video
+      if: steps.media.outputs.comparison != ''
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        path: ${{ steps.media.outputs.comparison }}
+        archive: false
+        if-no-files-found: error
+        retention-days: 3
+
+    - name: Upload source video
+      if: steps.media.outputs.source != ''
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        path: ${{ steps.media.outputs.source }}
+        archive: false
+        if-no-files-found: error
+        retention-days: 3

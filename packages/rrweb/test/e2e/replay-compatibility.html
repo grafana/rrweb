@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>rrweb fidelity fixture</title>
+    <style>
+      body {
+        font: 16px system-ui;
+        padding: 24px;
+      }
+      #badge {
+        color: rgb(120, 40, 10);
+        background-color: rgb(240, 230, 220);
+      }
+      #badge.approved {
+        background-color: rgb(220, 245, 225);
+      }
+      #scroller {
+        height: 80px;
+        width: 300px;
+        overflow: auto;
+      }
+      #scroller div {
+        height: 800px;
+      }
+      .rr-block {
+        width: 220px;
+        height: 28px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1 id="heading">Awaiting review</h1>
+    <p id="badge">Pending</p>
+    <label>Note <input id="note" value="Initial note" /></label>
+    <label>Approved <input id="approved" type="checkbox" /></label>
+    <label
+      >Status
+      <select id="status">
+        <option>Pending</option>
+        <option>Approved</option>
+      </select></label
+    >
+    <p class="rr-mask" id="masked">masked-initial-1729</p>
+    <div class="rr-block" id="blocked">
+      <span id="blocked-child">blocked-initial-1729</span>
+    </div>
+    <label
+      >Password
+      <input id="password" type="password" value="password-initial-1729"
+    /></label>
+    <input id="hidden" type="hidden" value="hidden-initial-1729" />
+    <p id="obsolete">Remove this row</p>
+    <div id="dynamic"></div>
+    <div id="scroller"><div>Scrollable activity log</div></div>
+    <button id="advance">Approve transaction</button>
+    <button id="reset">Reopen transaction</button>
+  </body>
+</html>

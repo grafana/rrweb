@@ -25,7 +25,7 @@ jobs:
           node-version-file: .nvmrc
 
       - name: Upgrade npm
-        run: npm install -g npm@11
+        run: npm install -g npm@11.12.1 --ignore-scripts
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -62,3 +62,307 @@ jobs:
         env:
           PUPPETEER_HEADLESS: 'true'
           PUPPETEER_EXECUTABLE_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+
+  replay:
+    name: Replay (${{ matrix.revision }})
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [base, candidate]
+    env:
+      BUILD_ROOT: ${{ matrix.revision == 'base' && 'rrweb-baseline' || '.' }}
+      REPLAY_STAGE: ${{ github.workspace }}/packages/rrweb/test-results/replay-stage
+      RRWEB_REPLAY_ARTIFACT_DIR: ${{ github.workspace }}/packages/rrweb/test-results/replay-stage/results
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out the pinned base revision
+        if: matrix.revision == 'base'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: rrweb-baseline
+          persist-credentials: false
+
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install candidate test harness dependencies
+        run: |
+          npm install -g npm@11.12.1 --ignore-scripts
+          npm ci --ignore-scripts
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+      - name: Install base build dependencies
+        if: matrix.revision == 'base'
+        working-directory: rrweb-baseline
+        run: npm ci --ignore-scripts
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+      - name: Build rrweb for this revision
+        id: build
+        working-directory: ${{ env.BUILD_ROOT }}
+        run: |
+          npm run build -w @grafana/rrweb
+          mkdir -p "$REPLAY_STAGE"
+          cp packages/rrweb/dist/rrweb.umd.cjs packages/rrweb/dist/style.css "$REPLAY_STAGE/"
+          git rev-parse HEAD > "$REPLAY_STAGE/sha.txt"
+
+      - name: Install Playwright Chromium
+        run: npx --no-install playwright install chromium
+        timeout-minutes: 5
+
+      - name: Verify rrweb privacy, fidelity, and version compatibility
+        id: fidelity
+        continue-on-error: ${{ matrix.revision == 'base' }}
+        run: npm run test:replay-compatibility -w @grafana/rrweb
+        timeout-minutes: 5
+        env:
+          RRWEB_BASELINE_ROOT: ${{ matrix.revision == 'base' && format('{0}/rrweb-baseline', github.workspace) || '' }}
+
+      - name: Record and replay review fixture
+        if: ${{ !cancelled() && matrix.revision == 'candidate' && steps.fidelity.outcome != 'skipped' }}
+        run: npm run test:replay-review -w @grafana/rrweb
+        timeout-minutes: 10
+
+      - name: Checkout pinned Faro Web SDK
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        id: faro-checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          repository: grafana/faro-web-sdk
+          ref: c8e33b9f0dd211f63b43b55a4677b5378612a9b2
+          path: faro-web-sdk
+          persist-credentials: false
+
+      - name: Verify a replay delivered by Faro
+        if: ${{ !cancelled() && steps.faro-checkout.outcome == 'success' }}
+        continue-on-error: ${{ matrix.revision == 'base' }}
+        run: npm run test:faro-integration -w @grafana/rrweb
+        timeout-minutes: 15
+        env:
+          FARO_WEB_SDK_PATH: faro-web-sdk
+          RRWEB_FARO_BUILD_ROOT: ${{ env.BUILD_ROOT }}
+
+      - name: Upload revision bundle and diagnostics
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rrweb-revision-${{ matrix.revision }}
+          path: ${{ env.REPLAY_STAGE }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 3
+
+  replay-report:
+    name: Compare rrweb revisions
+    needs: replay
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+    outputs:
+      replay-artifact-url: ${{ steps.upload-replay.outputs.artifact-url }}
+      comparison-summary: ${{ steps.compare.outputs.summary }}
+      base-screenshot-url: ${{ steps.base-screenshot.outputs.artifact-url }}
+      candidate-screenshot-url: ${{ steps.candidate-screenshot.outputs.artifact-url }}
+      replay-video-result: ${{ steps.render-replay-video.outcome }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install comparison dependencies and Chromium
+        run: |
+          npm install -g npm@11.12.1 --ignore-scripts
+          npm ci --ignore-scripts
+          npx --no-install playwright install chromium
+        env:
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: ${{ !cancelled() }}
+        with:
+          pattern: rrweb-revision-*
+          path: replay-inputs
+
+      - name: Compare functional results and measure both builds on one runner
+        id: compare
+        if: ${{ !cancelled() }}
+        run: node packages/rrweb/test/e2e/compare-revisions.mjs replay-inputs replay-report
+        env:
+          RRWEB_EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          RRWEB_EXPECTED_CANDIDATE_SHA: ${{ github.sha }}
+          RRWEB_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+      - name: Render source and replay comparison video
+        id: render-replay-video
+        if: >-
+          ${{ !cancelled() &&
+              hashFiles('replay-inputs/rrweb-revision-base/rrweb.umd.cjs') != '' &&
+              hashFiles('replay-report/candidate/events.json') != '' &&
+              hashFiles('replay-report/candidate/fixture-interaction.webm') != '' }}
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          node packages/rrweb/test/e2e/replay-comparison-video.mjs \
+            replay-inputs replay-report/candidate/events.json \
+            replay-report/candidate/fixture-interaction.webm replay-report/replay-comparison.webm
+
+      - name: Upload replay and comparison artifacts
+        id: upload-replay
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rrweb-replay-review-${{ github.run_attempt }}
+          path: replay-report/
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 3
+
+      - name: Stage checkpoint images for this run attempt
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p replay-media
+          copy_media() {
+            if [ -f "$1" ]; then
+              cp "$1" "replay-media/$2-$GITHUB_RUN_ATTEMPT.${1##*.}"
+            fi
+          }
+          copy_media replay-report/base/compatibility/base-to-base.png base-checkpoint
+          copy_media replay-report/candidate/compatibility/candidate-to-candidate.png candidate-checkpoint
+
+      - name: Publish Operations console videos
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/upload-replay-videos
+        with:
+          test-id: operations-console
+          comparison: replay-report/replay-comparison.webm
+          source: replay-report/candidate/fixture-interaction.webm
+
+      - name: Upload base checkpoint screenshot
+        id: base-screenshot
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: base-checkpoint-${{ github.run_attempt }}.png
+          path: replay-media/base-checkpoint-${{ github.run_attempt }}.png
+          archive: false
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 3
+
+      - name: Upload candidate checkpoint screenshot
+        id: candidate-screenshot
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: candidate-checkpoint-${{ github.run_attempt }}.png
+          path: replay-media/candidate-checkpoint-${{ github.run_attempt }}.png
+          archive: false
+          if-no-files-found: ignore
+          overwrite: true
+          retention-days: 3
+
+      - name: Require review media after successful replay checks
+        if: ${{ !cancelled() && needs.replay.result == 'success' }}
+        run: |
+          test -s replay-report/candidate/fixture-interaction.webm
+          test -s replay-report/replay-comparison.webm
+
+  replay-comment:
+    name: Link replay artifacts
+    needs: [test, replay, replay-report]
+    if: >-
+      ${{ !cancelled() &&
+          github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Post replay comparison comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ARTIFACT_URL: ${{ needs.replay-report.outputs.replay-artifact-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
+          TEST_RESULT: ${{ needs.test.result }}
+          REPLAY_RESULT: ${{ needs.replay.result }}
+          COMPARE_RESULT: ${{ needs.replay-report.result }}
+          COMPARISON_SUMMARY: ${{ needs.replay-report.outputs.comparison-summary }}
+          BASE_SCREENSHOT_URL: ${{ needs.replay-report.outputs.base-screenshot-url }}
+          CANDIDATE_SCREENSHOT_URL: ${{ needs.replay-report.outputs.candidate-screenshot-url }}
+          REPLAY_VIDEO_RESULT: ${{ needs.replay-report.outputs.replay-video-result }}
+        run: |
+          body_file="$RUNNER_TEMP/replay-comment.md"
+          video_rows=$(
+            gh api --paginate "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" |
+              jq -sr --arg attempt "$GITHUB_RUN_ATTEMPT" --arg run_url "$RUN_URL" '
+                [
+                  .[].artifacts[] | select(.expired == false) | .id as $id |
+                  .name | capture("^replay-video-(?<test>[a-z0-9]+(?:-[a-z0-9]+)*)-(?<kind>comparison|source)-(?<attempt>[0-9]+)\\.webm$") |
+                  select(.attempt == $attempt) | . + {id: $id}
+                ] | group_by(.test)[] |
+                (.[0].test | split("-") |
+                  map(if . == "url" then "URL" else . end) | join(" ") |
+                  (.[0:1] | ascii_upcase) + .[1:]) as $test |
+                map((if .kind == "comparison" then "Three-view comparison" else "Playwright source" end) as $label |
+                    "[\($label)](\($run_url)/artifacts/\(.id))") |
+                "| \($test) | \(join(" · ")) |"
+              '
+          ) || video_rows=''
+          {
+            printf '%s\n' '<!-- rrweb-replay-artifacts -->' '### Replay review' ''
+            printf 'Commit: %s · [Workflow run](%s/attempts/%s)\n\nUnit tests: %s · Replay matrix: %s · Comparison: %s\n\n' "$PR_HEAD_SHA" "$RUN_URL" "$GITHUB_RUN_ATTEMPT" "$TEST_RESULT" "$REPLAY_RESULT" "$COMPARE_RESULT"
+            if [ -n "$COMPARISON_SUMMARY" ]; then
+              printf '%s\n\n' "$COMPARISON_SUMMARY"
+            fi
+            if [ "$REPLAY_VIDEO_RESULT" != success ]; then
+              printf 'The Operations console comparison video was unavailable. See the workflow run above.\n\n'
+            fi
+            if [ -n "$video_rows$BASE_SCREENSHOT_URL$CANDIDATE_SCREENSHOT_URL" ]; then
+              printf '%s\n' '<details>' '<summary>Replay videos and screenshots</summary>' ''
+              if [ -n "$video_rows" ]; then
+                printf '%s\n' '| Test name | Link |' '| --- | --- |' "$video_rows" ''
+              fi
+              if [ -n "$BASE_SCREENSHOT_URL" ]; then
+                printf '%s\n' "- [Base replay checkpoint PNG]($BASE_SCREENSHOT_URL)"
+              fi
+              if [ -n "$CANDIDATE_SCREENSHOT_URL" ]; then
+                printf '%s\n' "- [Candidate replay checkpoint PNG]($CANDIDATE_SCREENSHOT_URL)"
+              fi
+              printf '%s\n' '' '</details>' ''
+            fi
+            if [ -n "$ARTIFACT_URL" ]; then
+              printf '[Download all replay assets and diagnostics](%s). Files expire after three days.\n' "$ARTIFACT_URL"
+            else
+              printf 'The diagnostics archive was unavailable. See the workflow run above.\n'
+            fi
+          } > "$body_file"
+          jq -n --rawfile body "$body_file" '{body: $body}' > "$RUNNER_TEMP/replay-comment.json"
+          gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" --input "$RUNNER_TEMP/replay-comment.json"
