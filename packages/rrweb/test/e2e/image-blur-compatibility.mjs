@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout } from 'node:timers/promises';
 
 function inlineImageDataURLs(value) {
   const dataURLs = new Set();
@@ -31,11 +33,32 @@ const blurImageResponses = new Map([
     '/blur-image?version=updated',
     '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="48"><rect width="32" height="48" fill="#202020"/><rect x="32" width="32" height="48" fill="#e0e0e0"/></svg>',
   ],
-  [
-    '/blur-image?version=control',
-    '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="48"><rect width="32" height="48" fill="#0f0"/><rect x="32" width="32" height="48" fill="#ff0"/></svg>',
-  ],
 ]);
+
+function imageFixture(version) {
+  return `<!doctype html><style>
+    body { margin: 24px; font: 16px sans-serif; }
+    img { width: 256px; height: 192px; image-rendering: pixelated; }
+  </style><h1>Inline image blur</h1>
+  <img id="blur-image" alt="Blur test image" src="/blur-image?version=${version}">
+  <div id="player"></div>`;
+}
+
+async function replaceFixtureImage(page) {
+  // Leave the initial image visible before the replacement in normal playback.
+  await setTimeout(1_500);
+  await page.evaluate(async () => {
+    const replacement = new Image();
+    replacement.id = 'blur-image';
+    replacement.alt = 'Replaced blur test image';
+    replacement.src = '/blur-image?version=updated';
+    await replacement.decode();
+    document.querySelector('#blur-image').replaceWith(replacement);
+  });
+  await page.waitForFunction(
+    () => window.__rrwebInlineImageDataURLs(window.__events).length > 1,
+  );
+}
 
 async function compareImagePixels(page, source, output) {
   return page.evaluate(
@@ -148,9 +171,7 @@ async function captureAndReplayImageBlur(
     browser,
     'candidate-image-blur',
     async (page, network) => {
-      await page.setContent(
-        '<!doctype html><style>body{margin:24px;font:16px sans-serif}img{width:256px;height:192px;image-rendering:pixelated}</style><h1>Inline image blur</h1><img id="blur-image" alt="Blur test image" src="/blur-image?version=initial"><div id="player"></div>',
-      );
+      await page.setContent(imageFixture('initial'));
       await page.waitForFunction(() => {
         const image = document.querySelector('#blur-image');
         return image.complete && image.naturalWidth === 64;
@@ -189,21 +210,7 @@ async function captureAndReplayImageBlur(
         }),
       );
 
-      await page.evaluate(async () => {
-        const replacement = new Image();
-        replacement.id = 'blur-image';
-        replacement.alt = 'Replaced blur test image';
-        replacement.src = '/blur-image?version=updated';
-        await replacement.decode();
-        document.querySelector('#blur-image').replaceWith(replacement);
-      });
-      await page.waitForFunction(() => {
-        const image = document.querySelector('#blur-image');
-        return image.complete && image.naturalWidth === 64;
-      });
-      await page.waitForFunction(() => {
-        return window.__rrwebInlineImageDataURLs(window.__events).length > 1;
-      });
+      await replaceFixtureImage(page);
       const updatedDataURL = await page.evaluate((initial) => {
         return window
           .__rrwebInlineImageDataURLs(window.__events)
@@ -261,8 +268,10 @@ async function captureAndReplayImageBlur(
         ['initial', 'updated'],
       );
       const assertReplayImage = async (checkpoint, expectedDataURL, label) => {
-        const offset = checkpoint.timestamp - events[0].timestamp + 1;
-        await page.evaluate((time) => window.__replayer.pause(time), offset);
+        if (checkpoint) {
+          const offset = checkpoint.timestamp - events[0].timestamp + 1;
+          await page.evaluate((time) => window.__replayer.pause(time), offset);
+        }
         await page.evaluate(
           () =>
             new Promise((done) =>
@@ -315,11 +324,7 @@ async function captureAndReplayImageBlur(
         return image?.currentSrc === expected;
       }, updatedDataURL);
       await page.evaluate(() => window.__replayer.pause());
-      await assertReplayImage(
-        checkpoints[1],
-        updatedDataURL,
-        'updated playback',
-      );
+      await assertReplayImage(undefined, updatedDataURL, 'updated playback');
       await assertReplayImage(checkpoints[0], initialDataURL, 'initial seek');
       await assertReplayImage(checkpoints[1], updatedDataURL, 'updated seek');
       assert.ok(
@@ -338,6 +343,11 @@ async function captureAndReplayImageBlur(
       await page.locator('iframe').screenshot({
         path: join(artifactDir, 'candidate-image-blur-replay.png'),
       });
+      const replayDataURL = await page
+        .frameLocator('iframe')
+        .locator('#blur-image')
+        .evaluate((image) => image.currentSrc);
+      assert.equal(replayDataURL, updatedDataURL);
       await writeFile(
         join(artifactDir, 'candidate-image-blur-checks.json'),
         `${JSON.stringify(
@@ -352,7 +362,7 @@ async function captureAndReplayImageBlur(
         )}\n`,
       );
       await page.evaluate(() => window.__replayer.destroy());
-      return { initialBlur, updatedBlur };
+      return { events, dataURL: updatedDataURL, initialBlur, updatedBlur };
     },
     { imageResponses: blurImageResponses },
   );
@@ -363,9 +373,7 @@ async function verifyImageBlurDisabled(browser, bundle, browserCase) {
     browser,
     'candidate-image-blur-disabled',
     async (page) => {
-      await page.setContent(
-        '<!doctype html><img id="blur-image" src="/blur-image?version=control">',
-      );
+      await page.setContent(imageFixture('initial'));
       await page.waitForFunction(() => {
         const image = document.querySelector('#blur-image');
         return image.complete && image.naturalWidth === 64;
@@ -383,21 +391,125 @@ async function verifyImageBlurDisabled(browser, bundle, browserCase) {
       await page.waitForFunction(() =>
         window.__events.some((event) => event.type === 2),
       );
-      const dataURL = await page.evaluate(() => {
-        const snapshot = window.__events.find((event) => event.type === 2);
-        return window.__rrwebInlineImageDataURLs(snapshot)[0];
-      });
+      await replaceFixtureImage(page);
+      const dataURL = await page.evaluate(() =>
+        window.__rrwebInlineImageDataURLs(window.__events).at(-1),
+      );
       assert.match(dataURL, /^data:image\//);
       const difference = await compareImagePixels(page, '#blur-image', dataURL);
       assert.ok(
         difference.changedPixels <= 1,
         `blur-disabled inline pixels should match the source (changed ${difference.changedPixels})`,
       );
-      await page.evaluate(() => window.__stop());
-      return difference;
+      const events = await page.evaluate(() => {
+        window.__stop();
+        return window.__events;
+      });
+      return { events, dataURL, ...difference };
     },
     { imageResponses: blurImageResponses },
   );
+}
+
+async function recordImageBlurComparison(
+  browser,
+  bundle,
+  artifactDir,
+  off,
+  on,
+) {
+  const dir = await mkdtemp(join(tmpdir(), 'rrweb-image-blur-'));
+  const size = { width: 960, height: 350 };
+  let context;
+  try {
+    context = await browser.newContext({
+      viewport: size,
+      serviceWorkers: 'block',
+      recordVideo: { dir, size },
+    });
+    await context.route('**/*', (route) => route.abort());
+    const page = await context.newPage();
+    const sourceURL = (version) =>
+      `data:image/svg+xml,${encodeURIComponent(
+        blurImageResponses.get(`/blur-image?version=${version}`),
+      )}`;
+    await page.setContent(`<!doctype html><style>
+      body { margin: 0; display: grid; grid-template-columns: repeat(3, 1fr);
+        background: #f5f5f5; color: #171717; font: 16px system-ui, sans-serif; }
+      section { min-width: 0; overflow: hidden; border-right: 1px solid #d1d5db; }
+      header { padding: 12px 16px; background: #111827; color: white;
+        font-weight: 600; }
+      figure { margin: 24px; font-family: sans-serif; }
+      figure img { width: 256px; height: 192px; image-rendering: pixelated; }
+      iframe { border: 0; }
+    </style>
+    <section><header>Source · Playwright fixture</header><figure>
+      <h1>Inline image blur</h1>
+      <img id="source" alt="Sharp source" src="${sourceURL('initial')}">
+    </figure></section>
+    <section><header>Replay · blur off (control)</header><div id="off"></div></section>
+    <section><header>Replay · blur on (8 px)</header><div id="on"></div></section>`);
+    await page.addScriptTag({ path: bundle });
+    const replacementTime = ({ events, dataURL }) =>
+      events.find((event) => inlineImageDataURLs(event).includes(dataURL))
+        .timestamp - events[0].timestamp;
+    const offTime = replacementTime(off);
+    const onTime = replacementTime(on);
+    const time = Math.min(offTime, onTime);
+    await page.evaluate(
+      ({ offEvents, onEvents, offOffset, onOffset }) => {
+        const replay = (id, events) =>
+          new window.rrweb.Replayer(events, {
+            root: document.getElementById(id),
+            mouseTail: false,
+            skipInactive: false,
+          });
+        replay('off', offEvents).play(offOffset);
+        replay('on', onEvents).play(onOffset);
+      },
+      {
+        offEvents: off.events,
+        onEvents: on.events,
+        offOffset: offTime - time,
+        onOffset: onTime - time,
+      },
+    );
+    for (const [id, { dataURL }] of [
+      ['off', off],
+      ['on', on],
+    ]) {
+      assert.equal(
+        await page.locator(`#${id} iframe`).getAttribute('sandbox'),
+        'allow-same-origin',
+      );
+      await page.waitForFunction(
+        ({ id, dataURL }) => {
+          const image = document
+            .querySelector(`#${id} iframe`)
+            .contentDocument.querySelector('#blur-image');
+          return (
+            image?.currentSrc === dataURL &&
+            image.complete &&
+            image.naturalWidth
+          );
+        },
+        { id, dataURL },
+      );
+    }
+    await page.locator('#source').evaluate(async (image, url) => {
+      image.src = url;
+      await image.decode();
+    }, sourceURL('updated'));
+    // Hold the final frame long enough to compare the same image in all three views.
+    await setTimeout(3_000);
+    const video = page.video();
+    await context.close();
+    context = undefined;
+    await video.saveAs(join(artifactDir, 'image-blur-comparison.webm'));
+  } finally {
+    await context?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 export async function runImageBlurE2E({
@@ -406,16 +518,29 @@ export async function runImageBlurE2E({
   browserCase,
   artifactDir,
 }) {
-  const disabledBlur = await verifyImageBlurDisabled(
+  const imageArtifactDir = join(artifactDir, 'image-blur');
+  await mkdir(imageArtifactDir, { recursive: true });
+  const {
+    dataURL: offURL,
+    events: offEvents,
+    ...disabledBlur
+  } = await verifyImageBlurDisabled(browser, bundle, browserCase);
+  const {
+    dataURL: onURL,
+    events: onEvents,
+    ...imageBlur
+  } = await captureAndReplayImageBlur(
     browser,
     bundle,
     browserCase,
+    imageArtifactDir,
   );
-  const imageBlur = await captureAndReplayImageBlur(
+  await recordImageBlurComparison(
     browser,
     bundle,
-    browserCase,
-    artifactDir,
+    imageArtifactDir,
+    { events: offEvents, dataURL: offURL },
+    { events: onEvents, dataURL: onURL },
   );
   return [
     {
