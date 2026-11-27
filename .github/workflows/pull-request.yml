@@ -260,6 +260,13 @@ jobs:
           comparison: replay-report/replay-comparison.webm
           source: replay-report/candidate/fixture-interaction.webm
 
+      - name: Publish image blur comparison video
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/upload-replay-videos
+        with:
+          test-id: image-blur
+          comparison: replay-report/candidate/compatibility/image-blur/image-blur-comparison.webm
+
       - name: Upload base checkpoint screenshot
         id: base-screenshot
         if: ${{ !cancelled() }}
@@ -289,6 +296,7 @@ jobs:
         run: |
           test -s replay-report/candidate/fixture-interaction.webm
           test -s replay-report/replay-comparison.webm
+          test -s replay-report/candidate/compatibility/image-blur/image-blur-comparison.webm
 
   replay-comment:
     name: Link replay artifacts

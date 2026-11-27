@@ -62,6 +62,42 @@ function getValidTagName(element: HTMLElement): Lowercase<string> {
 let canvasService: HTMLCanvasElement | null;
 let canvasCtx: CanvasRenderingContext2D | null;
 
+function applyInlineImageBlur(
+  context: CanvasRenderingContext2D | null,
+  blurRadius: number | undefined,
+): boolean {
+  if (blurRadius === undefined || blurRadius === 0) {
+    if (context && 'filter' in context) {
+      context.filter = 'none';
+    }
+    return true;
+  }
+
+  if (!Number.isFinite(blurRadius) || blurRadius < 0) {
+    console.warn(
+      'Cannot inline image with blur: inlineImagesBlur must be a finite, non-negative number.',
+    );
+    return false;
+  }
+
+  if (!context || !('filter' in context)) {
+    console.warn(
+      'Cannot inline blurred image: CanvasRenderingContext2D.filter is not supported.',
+    );
+    return false;
+  }
+
+  const filter = `blur(${blurRadius}px)`;
+  context.filter = filter;
+  if (context.filter === 'none') {
+    console.warn(
+      'Cannot inline blurred image: the configured blur filter was rejected.',
+    );
+    return false;
+  }
+  return true;
+}
+
 // eslint-disable-next-line no-control-regex
 const SRCSET_NOT_SPACES = /^[^ \t\n\r\u000c]+/; // Don't use \s, to avoid matching non-breaking space
 // eslint-disable-next-line no-control-regex
@@ -399,6 +435,7 @@ function serializeNode(
     maskInputFn: MaskInputFn | undefined;
     dataURLOptions?: DataURLOptions;
     inlineImages: boolean;
+    inlineImagesBlur?: number;
     recordCanvas: boolean;
     keepIframeSrcFn: KeepIframeSrcFn;
     /**
@@ -420,6 +457,7 @@ function serializeNode(
     maskInputFn,
     dataURLOptions = {},
     inlineImages,
+    inlineImagesBlur,
     recordCanvas,
     keepIframeSrcFn,
     newlyAddedElement = false,
@@ -459,6 +497,7 @@ function serializeNode(
         maskInputFn,
         dataURLOptions,
         inlineImages,
+        inlineImagesBlur,
         recordCanvas,
         keepIframeSrcFn,
         newlyAddedElement,
@@ -549,6 +588,7 @@ function serializeElementNode(
     maskInputFn: MaskInputFn | undefined;
     dataURLOptions?: DataURLOptions;
     inlineImages: boolean;
+    inlineImagesBlur?: number;
     recordCanvas: boolean;
     keepIframeSrcFn: KeepIframeSrcFn;
     /**
@@ -567,6 +607,7 @@ function serializeElementNode(
     maskInputFn,
     dataURLOptions = {},
     inlineImages,
+    inlineImagesBlur,
     recordCanvas,
     keepIframeSrcFn,
     newlyAddedElement = false,
@@ -702,6 +743,9 @@ function serializeElementNode(
       try {
         canvasService!.width = image.naturalWidth;
         canvasService!.height = image.naturalHeight;
+        if (!applyInlineImageBlur(canvasCtx, inlineImagesBlur)) {
+          return;
+        }
         canvasCtx!.drawImage(image, 0, 0);
         attributes.rr_dataURL = canvasService!.toDataURL(
           dataURLOptions.type,
@@ -727,6 +771,9 @@ function serializeElementNode(
           try {
             canvasService!.width = imageForInlining.naturalWidth;
             canvasService!.height = imageForInlining.naturalHeight;
+            if (!applyInlineImageBlur(canvasCtx, inlineImagesBlur)) {
+              return;
+            }
             canvasCtx!.drawImage(imageForInlining, 0, 0);
             attributes.rr_dataURL = canvasService!.toDataURL(
               dataURLOptions.type,
@@ -963,6 +1010,7 @@ export function serializeNodeWithId(
     dataURLOptions?: DataURLOptions;
     keepIframeSrcFn?: KeepIframeSrcFn;
     inlineImages?: boolean;
+    inlineImagesBlur?: number;
     recordCanvas?: boolean;
     preserveWhiteSpace?: boolean;
     onSerialize?: (n: Node) => unknown;
@@ -994,6 +1042,7 @@ export function serializeNodeWithId(
     slimDOMOptions,
     dataURLOptions = {},
     inlineImages = false,
+    inlineImagesBlur,
     recordCanvas = false,
     onSerialize,
     onIframeLoad,
@@ -1030,6 +1079,7 @@ export function serializeNodeWithId(
     maskInputFn,
     dataURLOptions,
     inlineImages,
+    inlineImagesBlur,
     recordCanvas,
     keepIframeSrcFn,
     newlyAddedElement,
@@ -1107,6 +1157,7 @@ export function serializeNodeWithId(
       slimDOMOptions,
       dataURLOptions,
       inlineImages,
+      inlineImagesBlur,
       recordCanvas,
       preserveWhiteSpace,
       onSerialize,
@@ -1184,6 +1235,7 @@ export function serializeNodeWithId(
             slimDOMOptions,
             dataURLOptions,
             inlineImages,
+            inlineImagesBlur,
             recordCanvas,
             preserveWhiteSpace,
             onSerialize,
@@ -1236,6 +1288,7 @@ export function serializeNodeWithId(
             slimDOMOptions,
             dataURLOptions,
             inlineImages,
+            inlineImagesBlur,
             recordCanvas,
             preserveWhiteSpace,
             onSerialize,
@@ -1276,6 +1329,7 @@ function snapshot(
     slimDOM?: 'all' | boolean | SlimDOMOptions;
     dataURLOptions?: DataURLOptions;
     inlineImages?: boolean;
+    inlineImagesBlur?: number;
     recordCanvas?: boolean;
     preserveWhiteSpace?: boolean;
     onSerialize?: (n: Node) => unknown;
@@ -1300,6 +1354,7 @@ function snapshot(
     maskTextSelector = null,
     inlineStylesheet = true,
     inlineImages = false,
+    inlineImagesBlur,
     recordCanvas = false,
     maskAllInputs = false,
     maskTextFn,
@@ -1357,6 +1412,7 @@ function snapshot(
     slimDOMOptions,
     dataURLOptions,
     inlineImages,
+    inlineImagesBlur,
     recordCanvas,
     preserveWhiteSpace,
     onSerialize,

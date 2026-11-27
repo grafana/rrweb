@@ -455,13 +455,15 @@ function buildNode(
             (node as unknown as RRCanvasElement).rr_dataURL = value.toString();
         } else if (tagName === 'img' && name === 'rr_dataURL') {
           const image = node as HTMLImageElement;
-          if (!image.currentSrc.startsWith('data:')) {
+          // Virtual DOM images do not expose currentSrc. Setting src as an
+          // attribute also lets rrdom carry the inline URL through a seek diff.
+          if (!image.currentSrc?.startsWith('data:')) {
             // Backup original img src. It may not have been set yet.
             image.setAttribute(
               'rrweb-original-src',
               n.attributes.src as string,
             );
-            image.src = value.toString();
+            image.setAttribute('src', value.toString());
           }
         }
 
