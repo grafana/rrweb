@@ -5,12 +5,25 @@ import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
 
-const [inputs, recordingPath, sourceVideo, output] = process.argv
-  .slice(2)
-  .map((path) => resolve(path));
+const [
+  inputArg,
+  recordingArg,
+  sourceVideoArg,
+  outputArg,
+  testId = 'operations-console',
+] = process.argv.slice(2);
+const inputs = inputArg && resolve(inputArg);
+const recordingPath = recordingArg && resolve(recordingArg);
+const sourceVideo = sourceVideoArg && resolve(sourceVideoArg);
+const output = outputArg && resolve(outputArg);
+const canvasRaster = testId === 'canvas-raster';
 assert.ok(
   inputs && recordingPath && sourceVideo && output,
-  'usage: replay-comparison-video.mjs <revision artifacts> <events.json> <fixture-interaction.webm> <output.webm>',
+  'usage: replay-comparison-video.mjs <revision artifacts> <events.json> <source.webm> <output.webm> [test-id]',
+);
+assert.ok(
+  ['operations-console', 'canvas-raster'].includes(testId),
+  `Unknown visual test: ${testId}`,
 );
 const run = promisify(execFile);
 const framesPerSecond = 12;
@@ -19,15 +32,51 @@ const headerHeight = 48;
 const events = JSON.parse(await readFile(recordingPath, 'utf8')).map(
   ({ event }) => event,
 );
+const rasterSnapshotEvents = events.filter(
+  (event) =>
+    event.type === 3 &&
+    event.data?.source === 9 &&
+    event.data?.type === 0 &&
+    event.data?.commands?.[0]?.property === 'clearRect' &&
+    event.data?.commands?.[1]?.property === 'drawImage',
+);
+if (canvasRaster) {
+  assert.ok(
+    rasterSnapshotEvents.length >= 12,
+    'Canvas raster video requires at least twelve static WebP snapshots',
+  );
+  assert.equal(
+    rasterSnapshotEvents[0].data.id,
+    rasterSnapshotEvents[1].data.id,
+    'Canvas raster snapshots must target the same canvas',
+  );
+} else {
+  assert.equal(rasterSnapshotEvents.length, 0);
+}
+const lastRasterBase64 = canvasRaster
+  ? rasterSnapshotEvents.at(-1).data.commands[1].args[0].args[0].data[0].base64
+  : undefined;
+const rasterCanvasId = 'raster-snapshot-canvas';
+const rasterWidth = canvasRaster
+  ? rasterSnapshotEvents[0].data.commands[0].args[2]
+  : undefined;
+const rasterHeight = canvasRaster
+  ? rasterSnapshotEvents[0].data.commands[0].args[3]
+  : undefined;
 const replayNavigations = events.filter((event) => event.type === 4);
 const [meta] = replayNavigations;
-const fullSnapshot = events.find((event) => event.type === 2);
+const fullSnapshots = events.filter((event) => event.type === 2);
+const fullSnapshot = canvasRaster ? fullSnapshots.at(-1) : fullSnapshots[0];
 assert.ok(
   meta && fullSnapshot,
   'Video requires a recording with viewport metadata and a full snapshot',
 );
 const { width, height } = meta.data;
-const { sourceNavigations = [] } = JSON.parse(
+const {
+  sourceNavigations = [],
+  sourceVideoDurationMs = 0,
+  sourceStartOffsetMs = 0,
+} = JSON.parse(
   await readFile(join(dirname(recordingPath), 'summary.json'), 'utf8').catch(
     (error) => {
       if (error.code === 'ENOENT') return '{}';
@@ -35,8 +84,29 @@ const { sourceNavigations = [] } = JSON.parse(
     },
   ),
 );
-const duration = events.at(-1).timestamp - events[0].timestamp;
-const firstFrame = fullSnapshot.timestamp - events[0].timestamp + 32;
+const recordingStartInSourceMs = canvasRaster
+  ? Math.max(
+      0,
+      events[0].timestamp -
+        (sourceNavigations[0]?.timestamp ?? events[0].timestamp),
+    )
+  : 0;
+const duration = Math.max(
+  events.at(-1).timestamp - events[0].timestamp,
+  sourceVideoDurationMs - recordingStartInSourceMs,
+);
+if (canvasRaster) {
+  assert.ok(
+    duration >= 10_000,
+    'Canvas raster comparison must be at least ten seconds',
+  );
+}
+const firstFrame = Math.max(
+  fullSnapshot.timestamp - events[0].timestamp + 32,
+  canvasRaster
+    ? rasterSnapshotEvents[0].timestamp - events[0].timestamp + 64
+    : 0,
+);
 assert.ok(
   Number.isFinite(duration) && duration > firstFrame,
   'Video requires a timed recording',
@@ -86,9 +156,13 @@ async function openLabels(browser) {
       background: #263449; color: #e2e8f0; font: 16px monospace;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   </style>
-  <section>Source · Playwright<span class="address"></span></section>
-  <section>Base · rrweb replay<span class="address"></span></section>
-  <section>Candidate · rrweb replay<span class="address"></span></section>`);
+  <section>${
+    canvasRaster ? 'Source capture' : 'Source'
+  }<span class="address"></span></section>
+  <section>Base replay<span class="address"></span></section>
+  <section>${
+    canvasRaster ? 'Opt-in replay' : 'Candidate replay'
+  }<span class="address"></span></section>`);
   return page;
 }
 
@@ -101,6 +175,7 @@ async function openPlayer(browser, revision, label) {
   await context.route('**/*', (route) => route.abort());
   const page = await context.newPage();
   const errors = [];
+  let initialRasterPixels;
   page.on('pageerror', (error) => errors.push(error.message));
   await page.setContent(`<!doctype html><style>
     html, body { margin: 0; overflow: hidden; background: #f3f5f9; }
@@ -112,14 +187,29 @@ async function openPlayer(browser, revision, label) {
   await page.clock.install({ time });
   await page.clock.pauseAt(time.getTime() + 1_000);
   await page.addScriptTag({ path: join(build, 'rrweb.umd.cjs') });
-  await page.evaluate((recording) => {
-    window.__videoReplayer = new window.rrweb.Replayer(recording, {
-      root: document.querySelector('#player'),
-      mouseTail: false,
-      skipInactive: false,
-    });
-    window.__videoReplayer.play(0);
-  }, events);
+  await page.evaluate(
+    ({ recording, revision, testId, expectedSrc }) => {
+      const config = {
+        root: document.querySelector('#player'),
+        mouseTail: false,
+        skipInactive: false,
+      };
+      if (testId === 'canvas-raster') {
+        config.replayCanvasSnapshots = revision === 'candidate';
+        window.__expectedRasterSrc = expectedSrc;
+      }
+      window.__videoReplayer = new window.rrweb.Replayer(recording, config);
+      window.__videoReplayer.play(0);
+    },
+    {
+      recording: events,
+      revision,
+      testId,
+      expectedSrc: lastRasterBase64
+        ? `data:image/webp;base64,${lastRasterBase64}`
+        : undefined,
+    },
+  );
   await page.clock.runFor(firstFrame);
   const iframe = page.locator('#player iframe');
   assert.equal(await iframe.getAttribute('sandbox'), 'allow-same-origin');
@@ -129,15 +219,125 @@ async function openPlayer(browser, revision, label) {
     ),
     `${label} did not rebuild the fixture`,
   );
-  return { page, errors, label };
+  if (canvasRaster && revision === 'candidate') {
+    await page.waitForFunction(
+      () => {
+        const image = window.__videoReplayer.iframe.contentDocument
+          .getElementById('raster-snapshot-canvas')
+          ?.querySelector('img');
+        return (
+          image?.complete && image.src.startsWith('data:image/webp;base64,')
+        );
+      },
+      null,
+      { timeout: 5000 },
+    );
+    initialRasterPixels = await assertRasterPixels(page, 'initial');
+  } else if (canvasRaster) {
+    assert.equal(
+      await iframe.evaluate((element) =>
+        Boolean(
+          element.contentDocument
+            ?.getElementById('raster-snapshot-canvas')
+            ?.querySelector('img'),
+        ),
+      ),
+      false,
+      'Base replay should leave the default-off raster canvas blank',
+    );
+  }
+  return { page, errors, label, initialRasterPixels };
 }
 
-const sourceStart = await findSourceStart();
+async function assertRasterPixels(page, frame) {
+  const screenshot = await page.locator('#player iframe').screenshot();
+  const pixels = await page.evaluate(
+    async ({ screenshotBase64, canvasId }) => {
+      const canvas =
+        window.__videoReplayer.iframe.contentDocument.getElementById(canvasId);
+      const bounds = canvas.getBoundingClientRect();
+      const screenshotImage = new Image();
+      screenshotImage.src = `data:image/png;base64,${screenshotBase64}`;
+      await screenshotImage.decode();
+      const sampler = document.createElement('canvas');
+      sampler.width = screenshotImage.naturalWidth;
+      sampler.height = screenshotImage.naturalHeight;
+      const context = sampler.getContext('2d');
+      context.drawImage(screenshotImage, 0, 0);
+      const corners = [
+        context.getImageData(bounds.x + 8, bounds.y + 8, 1, 1).data,
+        context.getImageData(bounds.right - 8, bounds.y + 8, 1, 1).data,
+      ].map((sample) => Array.from(sample));
+      const center = [];
+      for (let y = 0.3; y <= 0.7; y += 0.08) {
+        for (let x = 0.35; x <= 0.65; x += 0.06) {
+          center.push(
+            Array.from(
+              context.getImageData(
+                Math.round(bounds.x + bounds.width * x),
+                Math.round(bounds.y + bounds.height * y),
+                1,
+                1,
+              ).data,
+            ),
+          );
+        }
+      }
+      return { corners, center };
+    },
+    {
+      screenshotBase64: screenshot.toString('base64'),
+      canvasId: rasterCanvasId,
+    },
+  );
+  const [left, right] = pixels.corners;
+  assert.ok(
+    left[2] > 150 && left[0] < 100,
+    `${frame} left pixel should be blue`,
+  );
+  assert.ok(
+    right[0] > 150 && right[2] < 100,
+    `${frame} right pixel should be orange`,
+  );
+  return pixels.center;
+}
+
+const sourceStart = canvasRaster
+  ? (sourceStartOffsetMs + recordingStartInSourceMs + firstFrame) / 1000
+  : await findSourceStart();
 await mkdir(dirname(output), { recursive: true });
 const scratch = await mkdtemp(join(dirname(output), '.replay-frames-'));
 let browser;
 try {
   browser = await chromium.launch();
+  if (canvasRaster) {
+    const { stdout } = await run(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-select_streams',
+        'v:0',
+        '-show_entries',
+        'stream=width,height',
+        '-of',
+        'json',
+        sourceVideo,
+      ],
+      { timeout: 20_000 },
+    );
+    const [sourceStream] = JSON.parse(stdout).streams;
+    assert.equal(
+      sourceStream.width,
+      width,
+      'Source video width must match replay viewport',
+    );
+    assert.equal(
+      sourceStream.height,
+      height,
+      'Source video height must match replay viewport',
+    );
+  }
   const players = await Promise.all([
     openPlayer(browser, 'base', 'Base'),
     openPlayer(browser, 'candidate', 'Candidate'),
@@ -194,6 +394,50 @@ try {
     );
     offset = nextOffset;
   }
+  if (canvasRaster) {
+    await players[1].page.waitForFunction(
+      ({ canvasId, expectedSrc, expectedWidth, expectedHeight }) => {
+        const image = window.__videoReplayer.iframe.contentDocument
+          .getElementById(canvasId)
+          ?.querySelector('img');
+        return (
+          image?.complete &&
+          image.src === expectedSrc &&
+          image.naturalWidth === expectedWidth &&
+          image.naturalHeight === expectedHeight
+        );
+      },
+      {
+        canvasId: rasterCanvasId,
+        expectedSrc: `data:image/webp;base64,${lastRasterBase64}`,
+        expectedWidth: rasterWidth,
+        expectedHeight: rasterHeight,
+      },
+      { timeout: 5000 },
+    );
+    assert.equal(
+      await players[0].page.evaluate(
+        (canvasId) =>
+          Boolean(
+            window.__videoReplayer.iframe.contentDocument
+              .getElementById(canvasId)
+              ?.querySelector('img'),
+          ),
+        rasterCanvasId,
+      ),
+      false,
+      'Base replay should keep the default-off raster canvas blank',
+    );
+    const finalRasterPixels = await assertRasterPixels(
+      players[1].page,
+      'final',
+    );
+    assert.notDeepEqual(
+      finalRasterPixels,
+      players[1].initialRasterPixels,
+      'Later raster snapshots should visibly change the rendered canvas',
+    );
+  }
   for (const { label, errors } of players) {
     assert.deepEqual(errors, [], `${label} replay raised page errors`);
   }
@@ -245,6 +489,25 @@ try {
     ],
     { timeout: 180_000 },
   );
+  if (canvasRaster) {
+    const { stdout } = await run(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-show_entries',
+        'format=duration',
+        '-of',
+        'json',
+        staged,
+      ],
+      { timeout: 20_000 },
+    );
+    assert.ok(
+      Number(JSON.parse(stdout).format.duration) >= 10,
+      'Rendered canvas raster video must be at least ten seconds',
+    );
+  }
   await rename(staged, output);
   console.log(
     `Rendered ${frameCount} comparison frames at normal speed (source starts at ${sourceStart}s) to ${output}`,

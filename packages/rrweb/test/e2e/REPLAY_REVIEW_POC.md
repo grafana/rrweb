@@ -27,6 +27,23 @@ checkpoint data, screenshots, traces on compatibility failure, browser errors,
 and timing samples. If the archive is unavailable, the comment still links the
 workflow attempt. Fork PRs can use the Actions summary and artifacts.
 
+## Canvas raster visual case
+
+The standalone `canvas-raster` fixture records a full-viewport perspective
+scene with the recorder's numeric canvas sampling and WebP encoding over twelve seconds. Its comparison keeps
+snapshot playback off for the base, enables it for the candidate, checks visible
+pixels and the unchanged script-blocked sandbox, and holds the last frame for
+inspection. The source viewport and recorded video size are both 1280×720; the
+local comparison render is 13.25 seconds. It publishes its comparison and
+source videos under its own test ID, so the replay comment links it as a
+separate row.
+
+Run the fixture locally after building rrweb:
+
+```sh
+npm run test:replay-canvas-raster -w @grafana/rrweb
+```
+
 ## Run locally
 
 ```sh
