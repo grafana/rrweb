@@ -44,7 +44,6 @@ import dom from '@grafana/rrweb-utils';
 let wrappedEmit!: (e: eventWithoutTime, isCheckout?: boolean) => void;
 
 let takeFullSnapshot!: (isCheckout?: boolean) => void;
-let canvasManager!: CanvasManager;
 let recording = false;
 
 // Multiple tools (i.e. MooTools, Prototype.js) override Array.from and drop support for the 2nd parameter
@@ -88,6 +87,7 @@ function record<T = eventWithTime>(
     mousemoveWait,
     recordDOM = true,
     recordCanvas = false,
+    recordCanvasAsImage = false,
     recordCrossOriginIframes = false,
     recordAfter = options.recordAfter === 'DOMContentLoaded'
       ? options.recordAfter
@@ -132,6 +132,21 @@ function record<T = eventWithTime>(
   if (mousemoveWait !== undefined && sampling.mousemove === undefined) {
     sampling.mousemove = mousemoveWait;
   }
+
+  if (
+    recordCanvasAsImage &&
+    (!recordDOM ||
+      !recordCanvas ||
+      typeof sampling.canvas !== 'number' ||
+      !Number.isFinite(sampling.canvas) ||
+      sampling.canvas <= 0)
+  ) {
+    throw new Error(
+      'recordCanvasAsImage requires recordDOM, recordCanvas, and a positive numeric sampling.canvas value.',
+    );
+  }
+
+  const recordCanvasForSnapshots = recordCanvas && !recordCanvasAsImage;
 
   // reset mirror in case `record` this was called earlier
   mirror.reset();
@@ -298,7 +313,7 @@ function record<T = eventWithTime>(
 
   const processedNodeManager = new ProcessedNodeManager();
 
-  canvasManager = new CanvasManager({
+  const canvasManager = new CanvasManager({
     recordCanvas,
     mutationCb: wrappedCanvasMutationEmit,
     win: window,
@@ -307,6 +322,7 @@ function record<T = eventWithTime>(
     mirror,
     sampling: sampling.canvas,
     dataURLOptions,
+    recordCanvasAsImage,
   });
 
   const shadowDomManager = new ShadowDomManager({
@@ -322,7 +338,7 @@ function record<T = eventWithTime>(
       dataURLOptions,
       maskTextFn,
       maskInputFn,
-      recordCanvas,
+      recordCanvas: recordCanvasForSnapshots,
       inlineImages,
       sampling,
       slimDOMOptions,
@@ -369,7 +385,7 @@ function record<T = eventWithTime>(
       maskInputFn,
       slimDOM: slimDOMOptions,
       dataURLOptions,
-      recordCanvas,
+      recordCanvas: recordCanvasForSnapshots,
       inlineImages,
       onSerialize: (n) => {
         if (isSerializedIframe(n, mirror)) {
@@ -517,7 +533,7 @@ function record<T = eventWithTime>(
           inlineStylesheet,
           sampling,
           recordDOM,
-          recordCanvas,
+          recordCanvas: recordCanvasForSnapshots,
           inlineImages,
           userTriggeredOnInput,
           collectFonts,
@@ -615,6 +631,7 @@ function record<T = eventWithTime>(
           }
         }
       });
+      canvasManager.reset();
       processedNodeManager.destroy();
       recording = false;
       unregisterErrorHandler();

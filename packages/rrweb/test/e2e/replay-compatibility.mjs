@@ -335,6 +335,246 @@ async function replay(browser, name, bundle, recording) {
   });
 }
 
+async function replayCanvasImageMutations(browser, bundle, revision) {
+  return browserCase(
+    browser,
+    `${revision}-canvas-image-mutations`,
+    async (page) => {
+      await page.addScriptTag({ path: bundle });
+      const frames = await page.evaluate(() => {
+        const encode = (left, right) => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 80;
+          canvas.height = 50;
+          const context = canvas.getContext('2d', { willReadFrequently: true });
+          context.fillStyle = left;
+          context.fillRect(0, 0, 40, 50);
+          context.fillStyle = right;
+          context.fillRect(40, 0, 40, 50);
+          return canvas.toDataURL('image/webp', 1);
+        };
+        const first = encode('#ff0000', '#0000ff');
+        const second = encode('#00ff00', '#ffff00');
+        const canvasNode = {
+          id: 6,
+          type: 2,
+          tagName: 'canvas',
+          attributes: { id: 'image-canvas', width: '80', height: '50' },
+          childNodes: [],
+        };
+        const events = [
+          {
+            type: 4,
+            timestamp: 1,
+            data: { href: location.href, width: 320, height: 300 },
+          },
+          {
+            type: 2,
+            timestamp: 2,
+            data: {
+              initialOffset: { top: 0, left: 0 },
+              node: {
+                id: 1,
+                type: 0,
+                childNodes: [
+                  { id: 2, type: 1, name: 'html', publicId: '', systemId: '' },
+                  {
+                    id: 3,
+                    type: 2,
+                    tagName: 'html',
+                    attributes: {},
+                    childNodes: [
+                      {
+                        id: 4,
+                        type: 2,
+                        tagName: 'head',
+                        attributes: {},
+                        childNodes: [],
+                      },
+                      {
+                        id: 5,
+                        type: 2,
+                        tagName: 'body',
+                        attributes: {},
+                        childNodes: [canvasNode],
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+          {
+            type: 3,
+            timestamp: 50,
+            data: {
+              source: 0,
+              texts: [],
+              attributes: [],
+              removes: [],
+              adds: [
+                {
+                  parentId: 6,
+                  nextId: null,
+                  node: {
+                    id: 7,
+                    type: 2,
+                    tagName: 'img',
+                    attributes: {
+                      alt: '',
+                      width: '80',
+                      height: '50',
+                      style:
+                        'display: block; pointer-events: none; width: 80px; height: 50px;',
+                      src: first,
+                    },
+                    childNodes: [],
+                  },
+                },
+              ],
+            },
+          },
+          {
+            type: 3,
+            timestamp: 100,
+            data: {
+              source: 0,
+              texts: [],
+              attributes: [
+                {
+                  id: 7,
+                  attributes: { src: second },
+                  oldAttributes: { src: first },
+                },
+              ],
+              removes: [],
+              adds: [],
+            },
+          },
+        ];
+        window.__canvasImageEvents = events;
+        return { first, second };
+      });
+
+      const observations = [];
+      for (const useVirtualDom of [true, false]) {
+        const mode = useVirtualDom ? 'virtual-dom' : 'direct-dom';
+        const sandbox = await page.evaluate((useVirtualDom) => {
+          const replayer = new window.rrweb.Replayer(
+            window.__canvasImageEvents,
+            {
+              root: document.querySelector('#player'),
+              showWarning: true,
+              useVirtualDom,
+            },
+          );
+          replayer.pause(75);
+          window.__canvasImageReplayer = replayer;
+          return replayer.iframe.getAttribute('sandbox');
+        }, useVirtualDom);
+        assert.equal(
+          sandbox,
+          'allow-same-origin',
+          `${revision} ${mode}: sandbox`,
+        );
+
+        const waitForFrame = async (src) =>
+          page.waitForFunction((expectedSrc) => {
+            const image =
+              window.__canvasImageReplayer.iframe.contentDocument.querySelector(
+                '#image-canvas img',
+              );
+            return (
+              image?.src === expectedSrc &&
+              image.complete &&
+              image.naturalWidth === 80
+            );
+          }, src);
+        const visiblePixels = async (src, label) => {
+          await waitForFrame(src);
+          const screenshot = await page.locator('iframe').screenshot({
+            path: join(
+              artifactDir,
+              `${revision}-canvas-image-${mode}-${label}.png`,
+            ),
+          });
+          return page.evaluate(async (base64) => {
+            const image = new Image();
+            image.src = `data:image/png;base64,${base64}`;
+            await image.decode();
+            const canvas = document.createElement('canvas');
+            canvas.width = image.naturalWidth;
+            canvas.height = image.naturalHeight;
+            const context = canvas.getContext('2d', {
+              willReadFrequently: true,
+            });
+            context.drawImage(image, 0, 0);
+            const bounds = window.__canvasImageReplayer.iframe.contentDocument
+              .querySelector('#image-canvas')
+              .getBoundingClientRect();
+            return [
+              Array.from(
+                context.getImageData(bounds.x + 10, bounds.y + 25, 1, 1).data,
+              ),
+              Array.from(
+                context.getImageData(bounds.x + 70, bounds.y + 25, 1, 1).data,
+              ),
+            ];
+          }, screenshot.toString('base64'));
+        };
+        const assertColors = (pixels, left, right, label) => {
+          for (let channel = 0; channel < 3; channel++) {
+            assert.ok(
+              Math.abs(pixels[0][channel] - left[channel]) < 80,
+              `${label}: left pixel`,
+            );
+            assert.ok(
+              Math.abs(pixels[1][channel] - right[channel]) < 80,
+              `${label}: right pixel`,
+            );
+          }
+        };
+
+        assertColors(
+          await visiblePixels(frames.first, 'first'),
+          [255, 0, 0],
+          [0, 0, 255],
+          `${mode} first`,
+        );
+        await page.evaluate(() => window.__canvasImageReplayer.pause(125));
+        assertColors(
+          await visiblePixels(frames.second, 'second'),
+          [0, 255, 0],
+          [255, 255, 0],
+          `${mode} second`,
+        );
+        await page.evaluate(() => window.__canvasImageReplayer.pause(75));
+        assertColors(
+          await visiblePixels(frames.first, 'rewind'),
+          [255, 0, 0],
+          [0, 0, 255],
+          `${mode} rewind`,
+        );
+        observations.push({ useVirtualDom, sandbox });
+        await page.evaluate(() => window.__canvasImageReplayer.destroy());
+        await page.evaluate(() =>
+          document.querySelector('#player').replaceChildren(),
+        );
+      }
+
+      await writeFile(
+        join(artifactDir, `${revision}-canvas-image-mutations.json`),
+        `${JSON.stringify({ observations }, null, 2)}\n`,
+      );
+      return {
+        name: `${revision}-canvas-image-mutations`,
+        status: 'passed',
+        observations,
+      };
+    },
+  );
+}
+
 await rm(artifactDir, { recursive: true, force: true });
 await mkdir(artifactDir, { recursive: true });
 const scratch = await mkdtemp(join(tmpdir(), 'rrweb-compatibility-'));
@@ -398,6 +638,12 @@ try {
     );
     results.push(
       await replay(browser, 'released-to-candidate', bundle, releasedRecording),
+    );
+    results.push(
+      await replayCanvasImageMutations(browser, releasedBundle, 'released'),
+    );
+    results.push(
+      await replayCanvasImageMutations(browser, bundle, 'candidate'),
     );
   }
 } catch (error) {

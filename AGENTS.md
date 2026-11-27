@@ -374,6 +374,10 @@ later flushed to the real DOM via `diff()`.
 Canvas replay is gated by `UNSAFE_replayCanvas`. Do not apply canvas
 mutation data when this option is false.
 
+`recordCanvasAsImage` is a recorder opt-in for bounded static WebP canvas frames.
+It emits ordinary DOM mutations for canvas fallback images, so replay does not
+need a special option and keeps the supported iframe sandbox.
+
 Injected replay styles are not part of the recorded page. Do not serialize
 them or assign normal serialized node ids to them. rrdom uses negative ids
 for unserialized replay-only nodes.

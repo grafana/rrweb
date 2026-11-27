@@ -68,6 +68,7 @@ export type recordOptions<T> = {
   dataURLOptions?: DataURLOptions;
   recordDOM?: boolean;
   recordCanvas?: boolean;
+  recordCanvasAsImage?: boolean;
   recordCrossOriginIframes?: boolean;
   recordAfter?: 'DOMContentLoaded' | 'load';
   userTriggeredOnInput?: boolean;

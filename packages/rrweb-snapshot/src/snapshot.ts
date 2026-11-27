@@ -61,6 +61,15 @@ function getValidTagName(element: HTMLElement): Lowercase<string> {
 
 let canvasService: HTMLCanvasElement | null;
 let canvasCtx: CanvasRenderingContext2D | null;
+const canvasFallbackImages = new WeakSet<Node>();
+
+export function markCanvasFallbackImage(image: HTMLImageElement) {
+  canvasFallbackImages.add(image);
+}
+
+export function isCanvasFallbackImage(node: Node) {
+  return canvasFallbackImages.has(node);
+}
 
 // eslint-disable-next-line no-control-regex
 const SRCSET_NOT_SPACES = /^[^ \t\n\r\u000c]+/; // Don't use \s, to avoid matching non-breaking space
@@ -689,7 +698,7 @@ function serializeElementNode(
     }
   }
   // save image offline
-  if (tagName === 'img' && inlineImages) {
+  if (tagName === 'img' && inlineImages && !isCanvasFallbackImage(n)) {
     if (!canvasService) {
       canvasService = doc.createElement('canvas');
       canvasCtx = canvasService.getContext('2d');
