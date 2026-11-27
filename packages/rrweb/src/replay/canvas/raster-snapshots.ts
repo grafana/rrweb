@@ -684,6 +684,26 @@ export function attachRasterCanvasSnapshots(replayer: Replayer): () => void {
     // cleanup prompt without making replay work proportional to page size.
     // During a seek the real canvas has its old size until the virtual DOM flush.
     if (!replayer.usingVirtualDom) pruneDetachedCanvases();
+    if (
+      isRecord(rawEvent) &&
+      rawEvent.type === EventType.IncrementalSnapshot &&
+      isRecord(rawEvent.data) &&
+      rawEvent.data.source === IncrementalSource.Mutation &&
+      Array.isArray(rawEvent.data.attributes)
+    ) {
+      for (const change of rawEvent.data.attributes as unknown[]) {
+        if (
+          isRecord(change) &&
+          typeof change.id === 'number' &&
+          isRecord(change.attributes) &&
+          ('width' in change.attributes || 'height' in change.attributes)
+        ) {
+          // A backing store resize clears the old frame, even if it later returns to the same size.
+          const state = statesById.get(change.id);
+          if (state) removeState(change.id, state);
+        }
+      }
+    }
     const canvasId = getCanvasMutationId(rawEvent);
     const snapshot = getRasterCanvasSnapshot(rawEvent);
     if (disposed) {

@@ -275,10 +275,14 @@ try {
     frames.length >= 12,
     'recorder should emit at least twelve sampled frames',
   );
+  const samples = new Set();
   for (const { data } of frames) {
     assert.equal(data.id, canvasNode.id);
-    assert.equal(data.commands[1]?.args[0]?.args[0]?.type, 'image/webp');
+    const blob = data.commands[1]?.args[0]?.args[0];
+    assert.equal(blob?.type, 'image/webp');
+    samples.add(blob.data[0].base64);
   }
+  assert.ok(samples.size >= 12, 'sampled frames should show a changing canvas');
   eventPayloads = events.map((event, sequence) => ({
     fixtureId,
     sequence,

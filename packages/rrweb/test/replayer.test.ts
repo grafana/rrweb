@@ -337,6 +337,8 @@ describe('replayer', function () {
                 ? `...[
               [250, [{ id: 9002, attributes: { width: '60' } }]],
               [270, [{ id: 9002, attributes: { title: 'Resized canvas' } }]],
+              [290, [{ id: 9002, attributes: { width: '90' } }]],
+              [300, [{ id: 9002, attributes: { width: '60' } }]],
             ].map(([timestamp, attributes]) => ({
               type: EventType.IncrementalSnapshot,
               timestamp,
@@ -622,6 +624,15 @@ describe('replayer', function () {
         const canvas = doc.getElementById('intrinsic-snapshot-canvas');
         const image = canvas.querySelector('img');
         return canvas.width === 60 && image?.naturalWidth === 60;
+      },
+      { timeout: 5000 },
+    );
+    await page.evaluate('window.__rrwebRasterReplayer.pause(310)');
+    await page.waitForFunction(
+      () => {
+        const doc = window.__rrwebRasterReplayer.iframe.contentDocument;
+        const canvas = doc.getElementById('intrinsic-snapshot-canvas');
+        return canvas.width === 60 && !canvas.querySelector('img');
       },
       { timeout: 5000 },
     );

@@ -84,9 +84,16 @@ const {
     },
   ),
 );
+const recordingStartInSourceMs = canvasRaster
+  ? Math.max(
+      0,
+      events[0].timestamp -
+        (sourceNavigations[0]?.timestamp ?? events[0].timestamp),
+    )
+  : 0;
 const duration = Math.max(
   events.at(-1).timestamp - events[0].timestamp,
-  sourceVideoDurationMs,
+  sourceVideoDurationMs - recordingStartInSourceMs,
 );
 if (canvasRaster) {
   assert.ok(
@@ -296,7 +303,7 @@ async function assertRasterPixels(page, frame) {
 }
 
 const sourceStart = canvasRaster
-  ? sourceStartOffsetMs / 1000
+  ? (sourceStartOffsetMs + recordingStartInSourceMs + firstFrame) / 1000
   : await findSourceStart();
 await mkdir(dirname(output), { recursive: true });
 const scratch = await mkdtemp(join(dirname(output), '.replay-frames-'));
