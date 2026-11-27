@@ -248,6 +248,7 @@ jobs:
         if: >-
           ${{ !cancelled() &&
               hashFiles('replay-inputs/rrweb-revision-base/rrweb.umd.cjs') != '' &&
+              hashFiles('replay-inputs/rrweb-revision-base/results/canvas-raster/events.json') != '' &&
               hashFiles('replay-report/candidate/canvas-raster/events.json') != '' &&
               hashFiles('replay-report/candidate/canvas-raster/source.webm') != '' }}
         timeout-minutes: 6

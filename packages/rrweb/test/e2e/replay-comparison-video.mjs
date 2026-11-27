@@ -32,6 +32,14 @@ const headerHeight = 48;
 const events = JSON.parse(await readFile(recordingPath, 'utf8')).map(
   ({ event }) => event,
 );
+const baseCanvasRecording = canvasRaster
+  ? JSON.parse(
+      await readFile(
+        join(inputs, 'rrweb-revision-base/results/canvas-raster/events.json'),
+        'utf8',
+      ),
+    ).map(({ event }) => event)
+  : undefined;
 function collectCanvasImageSources(recording) {
   return recording.flatMap((event) => {
     if (event.data?.source !== 0) return [];
@@ -59,6 +67,8 @@ if (canvasRaster) {
   );
   assert.ok(new Set(canvasImageSources).size >= 12);
   assert.ok(canvasImageSources.every((source) => source.length <= 1_048_576));
+  assert.ok(baseCanvasRecording.some((event) => event.data?.source === 9));
+  assert.equal(collectCanvasImageSources(baseCanvasRecording).length, 0);
 } else {
   assert.equal(canvasImageSources.length, 0);
 }
@@ -69,8 +79,6 @@ const firstRasterEvent = canvasRaster
 assert.ok(!canvasRaster || firstRasterEvent, 'Canvas image event is missing');
 const firstRasterSrc = canvasRaster ? canvasImageSources[0] : undefined;
 const rasterCanvasId = 'raster-snapshot-canvas';
-const rasterWidth = canvasRaster ? 1280 : undefined;
-const rasterHeight = canvasRaster ? 720 : undefined;
 const replayNavigations = events.filter((event) => event.type === 4);
 const [meta] = replayNavigations;
 const fullSnapshots = events.filter((event) => event.type === 2);
@@ -92,9 +100,16 @@ const {
     },
   ),
 );
+const recordingStartInSourceMs = canvasRaster
+  ? Math.max(
+      0,
+      events[0].timestamp -
+        (sourceNavigations[0]?.timestamp ?? events[0].timestamp),
+    )
+  : 0;
 const duration = Math.max(
   events.at(-1).timestamp - events[0].timestamp,
-  sourceVideoDurationMs,
+  sourceVideoDurationMs - recordingStartInSourceMs,
 );
 if (canvasRaster) {
   assert.ok(
@@ -158,14 +173,22 @@ async function openLabels(browser) {
   <section>${
     canvasRaster ? 'Source capture' : 'Source'
   }<span class="address"></span></section>
-  <section>Base replay<span class="address"></span></section>
   <section>${
-    canvasRaster ? 'Image event replay' : 'Candidate replay'
+    canvasRaster ? 'Base recording in base player' : 'Base replay'
+  }<span class="address"></span></section>
+  <section>${
+    canvasRaster ? 'Candidate recording in base player' : 'Candidate replay'
   }<span class="address"></span></section>`);
   return page;
 }
 
-async function openPlayer(browser, revision, label) {
+async function openPlayer(
+  browser,
+  revision,
+  label,
+  recording = events,
+  showRasterImage = false,
+) {
   const context = await browser.newContext({
     viewport: { width, height },
     serviceWorkers: 'block',
@@ -193,7 +216,7 @@ async function openPlayer(browser, revision, label) {
       skipInactive: false,
     });
     window.__videoReplayer.play(0);
-  }, events);
+  }, recording);
   await page.clock.runFor(firstFrame);
   const iframe = page.locator('#player iframe');
   assert.equal(await iframe.getAttribute('sandbox'), 'allow-same-origin');
@@ -203,9 +226,11 @@ async function openPlayer(browser, revision, label) {
     ),
     `${label} did not rebuild the fixture`,
   );
-  if (canvasRaster) {
+  if (showRasterImage) {
     await waitForRasterImage(page, firstRasterSrc);
     initialRasterPixels = await assertRasterPixels(page, 'initial');
+  } else if (canvasRaster) {
+    await assertBlankRaster(page);
   }
   return { page, errors, label, initialRasterPixels };
 }
@@ -233,7 +258,7 @@ async function waitForRasterImage(page, expectedSrc) {
   throw new Error('Canvas image did not decode before the replay checkpoint');
 }
 
-async function assertRasterPixels(page, frame) {
+async function readRasterPixels(page) {
   const screenshot = await page.locator('#player iframe').screenshot();
   const pixels = await page.evaluate(
     async ({ screenshotBase64, canvasId }) => {
@@ -274,7 +299,14 @@ async function assertRasterPixels(page, frame) {
       canvasId: rasterCanvasId,
     },
   );
-  const [left, right] = pixels.corners;
+  return pixels;
+}
+
+async function assertRasterPixels(page, frame) {
+  const {
+    corners: [left, right],
+    center,
+  } = await readRasterPixels(page);
   assert.ok(
     left[2] > 150 && left[0] < 100,
     `${frame} left pixel should be blue`,
@@ -283,11 +315,38 @@ async function assertRasterPixels(page, frame) {
     right[0] > 150 && right[2] < 100,
     `${frame} right pixel should be orange`,
   );
-  return pixels.center;
+  return center;
+}
+
+async function assertBlankRaster(page) {
+  const hasFallback = await page.evaluate(
+    (canvasId) =>
+      Boolean(
+        window.__videoReplayer.iframe.contentDocument
+          .getElementById(canvasId)
+          ?.querySelector('img'),
+      ),
+    rasterCanvasId,
+  );
+  assert.equal(
+    hasFallback,
+    false,
+    'Base recording should have no fallback image',
+  );
+  const { corners, center } = await readRasterPixels(page);
+  assert.ok(
+    [...corners, ...center].every(
+      ([red, green, blue]) =>
+        Math.abs(red - 16) < 4 &&
+        Math.abs(green - 26) < 4 &&
+        Math.abs(blue - 43) < 4,
+    ),
+    'Base recording should show only the canvas background',
+  );
 }
 
 const sourceStart = canvasRaster
-  ? sourceStartOffsetMs / 1000
+  ? (sourceStartOffsetMs + recordingStartInSourceMs + firstFrame) / 1000
   : await findSourceStart();
 await mkdir(dirname(output), { recursive: true });
 const scratch = await mkdtemp(join(dirname(output), '.replay-frames-'));
@@ -322,10 +381,17 @@ try {
       'Source video height must match replay viewport',
     );
   }
-  const players = await Promise.all([
-    openPlayer(browser, 'base', 'Base'),
-    openPlayer(browser, 'candidate', 'Candidate'),
-  ]);
+  const players = await Promise.all(
+    canvasRaster
+      ? [
+          openPlayer(browser, 'base', 'Base recording', baseCanvasRecording),
+          openPlayer(browser, 'base', 'Candidate recording', events, true),
+        ]
+      : [
+          openPlayer(browser, 'base', 'Base'),
+          openPlayer(browser, 'candidate', 'Candidate'),
+        ],
+  );
   const labels = await openLabels(browser);
   // Advance both players to the same recording time before taking each pair of frames.
   const interval = 1000 / framesPerSecond;
@@ -379,18 +445,14 @@ try {
     offset = nextOffset;
   }
   if (canvasRaster) {
-    for (const player of players) {
-      await waitForRasterImage(player.page, lastRasterSrc);
-      const finalRasterPixels = await assertRasterPixels(
-        player.page,
-        `${player.label} final`,
-      );
-      assert.notDeepEqual(
-        finalRasterPixels,
-        player.initialRasterPixels,
-        `${player.label} should show changing sampled image frames`,
-      );
-    }
+    await assertBlankRaster(players[0].page);
+    const { page, initialRasterPixels } = players[1];
+    await waitForRasterImage(page, lastRasterSrc);
+    assert.notDeepEqual(
+      await assertRasterPixels(page, 'final'),
+      initialRasterPixels,
+      'Candidate recording should show changing sampled image frames',
+    );
   }
   for (const { label, errors } of players) {
     assert.deepEqual(errors, [], `${label} replay raised page errors`);

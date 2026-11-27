@@ -30,15 +30,12 @@ workflow attempt. Fork PRs can use the Actions summary and artifacts.
 ## Canvas raster visual case
 
 The standalone `canvas-raster` fixture records a full-viewport perspective
-scene as sampled WebP image mutations over twelve seconds. Its comparison loads
-the same events in both the base and candidate players with their default
-settings, checks visible pixels and the script-blocked sandbox, and holds the
-last frame for inspection. The base recorder also records the same scene as a
-control and must emit sampled canvas commands instead of image mutations. The
-source viewport and recorded video size are both
-1280×720; the local comparison render is 13.25 seconds. It publishes its
-comparison and source videos under its own test ID, so the replay comment links
-it as a separate row.
+scene over twelve seconds with both recorders. The comparison shows the source
+capture, the base recording in the base player, and the candidate recording in
+the same base player. It checks that the base recording's canvas stays blank
+and that the candidate recording shows changing pixels. Both replays use the
+script-blocked sandbox. The fixture publishes its comparison and source videos
+under its own test ID.
 
 Run the fixture locally after building rrweb:
 

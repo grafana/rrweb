@@ -267,18 +267,23 @@ try {
   });
   await page.goto(initialUrl);
   await page.addScriptTag({ path: bundlePath });
-  await page.evaluate((recordCanvasAsImage) => {
-    window.__recordedEvents = [];
-    window.__recordingStop = window.rrweb.record({
-      recordCanvas: true,
-      ...(recordCanvasAsImage && { recordCanvasAsImage }),
-      sampling: { canvas: 2 },
-      dataURLOptions: { type: 'image/webp', quality: 1 },
-      emit(event) {
-        window.__recordedEvents.push(event);
-      },
-    });
-  }, !baseRecorder);
+  await page.evaluate(
+    ({ canvasId, recordCanvasAsImage }) => {
+      const canvas = document.getElementById(canvasId);
+      canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+      window.__recordedEvents = [];
+      window.__recordingStop = window.rrweb.record({
+        recordCanvas: true,
+        ...(recordCanvasAsImage && { recordCanvasAsImage }),
+        sampling: { canvas: 2 },
+        dataURLOptions: { type: 'image/webp', quality: 1 },
+        emit(event) {
+          window.__recordedEvents.push(event);
+        },
+      });
+    },
+    { canvasId, recordCanvasAsImage: !baseRecorder },
+  );
   await page.waitForFunction(() =>
     window.__recordedEvents.some((event) => event.type === 2),
   );
@@ -294,6 +299,7 @@ try {
   );
   const canvasNode = findSerializedCanvas(fullSnapshots[0].data.node);
   assert.ok(canvasNode, 'full snapshot should include the target canvas');
+  assert.equal(canvasNode.attributes.rr_dataURL, undefined);
   const events = [...capturedEvents].sort(
     (left, right) => left.timestamp - right.timestamp,
   );
