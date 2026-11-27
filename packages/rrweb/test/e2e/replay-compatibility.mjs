@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +22,7 @@ const artifactDir = resolve(
     join(packageDir, 'test-results/replay-review'),
   'compatibility',
 );
+const urlNavigationDir = join(artifactDir, 'url-navigation');
 // Update deliberately when changing the released compatibility baseline.
 const released = {
   package: '@grafana/rrweb@2.0.0-grafana.3',
@@ -54,10 +62,20 @@ function publicState(doc) {
   };
 }
 
-async function browserCase(browser, name, callback) {
+async function browserCase(
+  browser,
+  name,
+  callback,
+  { recordVideo = false, outputDir = artifactDir } = {},
+) {
   const context = await browser.newContext({
     viewport: { width: 1280, height: 900 },
     serviceWorkers: 'block',
+    ...(recordVideo
+      ? {
+          recordVideo: { dir: scratch, size: { width: 1280, height: 900 } },
+        }
+      : {}),
   });
   // DOM snapshot tracing injects scripts into replay iframes; keep their sandbox strict.
   await context.tracing.start({
@@ -66,6 +84,7 @@ async function browserCase(browser, name, callback) {
     sources: true,
   });
   const page = await context.newPage();
+  const video = recordVideo ? page.video() : null;
   const errors = [];
   let passed = false;
   page.on('pageerror', (error) => errors.push(error.message));
@@ -93,17 +112,22 @@ async function browserCase(browser, name, callback) {
   } finally {
     if (!passed) {
       await page
-        .screenshot({ path: join(artifactDir, `${name}-failure.png`) })
+        .screenshot({ path: join(outputDir, `${name}-failure.png`) })
         .catch(() => undefined);
       await writeFile(
-        join(artifactDir, `${name}-errors.json`),
+        join(outputDir, `${name}-errors.json`),
         JSON.stringify(errors, null, 2),
       );
     }
     await context.tracing.stop(
-      passed ? {} : { path: join(artifactDir, `${name}-trace.zip`) },
+      passed ? {} : { path: join(outputDir, `${name}-trace.zip`) },
     );
     await context.close();
+    if (passed && video) {
+      const videoPath = join(outputDir, `${name}.webm`);
+      await video.saveAs(videoPath);
+      assert.ok((await stat(videoPath)).size > 0, `${name}: video artifact`);
+    }
   }
 }
 
@@ -335,6 +359,240 @@ async function replay(browser, name, bundle, recording) {
   });
 }
 
+async function captureUrlMetaNavigation(browser, bundle, revision) {
+  const name = 'url-meta-navigation';
+  await mkdir(urlNavigationDir, { recursive: true });
+  return browserCase(
+    browser,
+    name,
+    async (page) => {
+      await page.setContent(`<!doctype html>
+        <style>
+          body { margin: 0; padding: 32px; color: #172b4d; font: 20px system-ui; }
+          header { position: sticky; top: 0; padding: 16px; background: #102a43; color: white; }
+          nav { display: flex; gap: 24px; margin: 24px 0; }
+          a { color: #075985; font-weight: 700; }
+          main { min-height: 500px; padding: 24px; background: #e0f2fe; }
+          #capture-cover { position: fixed; inset: 0; z-index: 10; background: black; }
+        </style>
+        <div id="capture-cover" aria-hidden="true"></div>
+        <header>
+          <strong>URL Meta navigation</strong>
+        </header>
+        <nav id="url-navigation" aria-label="Transaction views">
+          <a id="transactions-link" href="/transactions">Transactions</a>
+          <a id="activity-link" href="/transactions#activity">Activity</a>
+        </nav>
+        <main>
+          <h1 id="navigation-heading">Awaiting review</h1>
+          <p id="navigation-note">No navigation yet</p>
+        </main>`);
+      await page.evaluate(() => {
+        for (const link of document.querySelectorAll('#url-navigation a')) {
+          link.addEventListener('click', (event) => {
+            event.preventDefault();
+            window.history.pushState({}, '', link.href);
+          });
+        }
+      });
+      const mainFrameUrls = [page.url()];
+      const sourceNavigations = [{ timestamp: Date.now(), href: page.url() }];
+      page.on('framenavigated', (frame) => {
+        if (frame === page.mainFrame()) {
+          mainFrameUrls.push(frame.url());
+          sourceNavigations.push({ timestamp: Date.now(), href: frame.url() });
+        }
+      });
+      await page.addScriptTag({ path: bundle });
+      await page.evaluate(() => {
+        window.__events = [];
+        window.__stop = window.rrweb.record({
+          emit: (event) => window.__events.push(event),
+        });
+      });
+      await page.waitForFunction(() =>
+        window.__events.some((event) => event.type === 2),
+      );
+      await page.waitForTimeout(250);
+      const sourceStartTimestamp = await page
+        .locator('#capture-cover')
+        .evaluate((element) => {
+          element.remove();
+          return Date.now();
+        });
+      await page.waitForTimeout(500);
+
+      await page.locator('#transactions-link').click();
+      await page.locator('#navigation-heading').evaluate((element) => {
+        element.textContent = 'Transactions opened';
+      });
+      await page.locator('#navigation-note').evaluate((element) => {
+        element.textContent = 'Mutation after first URL change';
+      });
+      await page.waitForTimeout(700);
+      await page.locator('#activity-link').click();
+      await page.locator('#navigation-heading').evaluate((element) => {
+        element.textContent = 'Activity opened';
+      });
+      await page.locator('#navigation-note').evaluate((element) => {
+        element.textContent = 'Mutation after second URL change';
+      });
+      await page.waitForTimeout(700);
+      await page.evaluate(() => window.history.back());
+      await page.waitForFunction(
+        () => window.location.href === 'http://fixture.test/transactions',
+      );
+      await page.locator('#navigation-heading').evaluate((element) => {
+        element.textContent = 'Returned to transactions';
+      });
+      await page.locator('#navigation-note').evaluate((element) => {
+        element.textContent = 'Mutation after browser back';
+      });
+      await page.waitForTimeout(700);
+      const recording = await page.evaluate(() => {
+        window.rrweb.record.addCustomEvent('checkpoint', {
+          label: 'after-url-navigation',
+        });
+        const checkpoint = window.__events.at(-1);
+        window.__stop();
+        return {
+          events: window.__events,
+          checkpoint,
+          sourceUrl: window.location.href,
+          state: {
+            heading: document.querySelector('#navigation-heading').textContent,
+            note: document.querySelector('#navigation-note').textContent,
+          },
+        };
+      });
+      const metaHrefs = recording.events
+        .filter((event) => event.type === 4)
+        .map((event) => event.data.href);
+      const fullSnapshotCount = recording.events.filter(
+        (event) => event.type === 2,
+      ).length;
+      const expectedUrls = [
+        'http://fixture.test/',
+        'http://fixture.test/transactions',
+        'http://fixture.test/transactions#activity',
+        'http://fixture.test/transactions',
+      ];
+      assert.deepEqual(
+        mainFrameUrls,
+        expectedUrls,
+        `${name}: Playwright main-frame navigation timeline`,
+      );
+      if (revision === 'candidate') {
+        assert.deepEqual(
+          metaHrefs,
+          expectedUrls,
+          `${name}: one Meta href per main-frame URL, without duplicate hash/back events`,
+        );
+      }
+      assert.equal(
+        fullSnapshotCount,
+        1,
+        `${name}: URL transitions do not trigger full snapshots`,
+      );
+      assert.equal(recording.sourceUrl, expectedUrls.at(-1));
+      await writeFile(
+        join(urlNavigationDir, `${name}-events.json`),
+        `${JSON.stringify(recording.events, null, 2)}\n`,
+      );
+      const evidence = {
+        caseId: name,
+        sourceUrls: mainFrameUrls,
+        rrwebMetaHrefs: metaHrefs,
+        fullSnapshotCount,
+        checkpoint: {
+          label: recording.checkpoint.data.payload.label,
+          timestamp: recording.checkpoint.timestamp,
+          expected: recording.state,
+        },
+      };
+      await writeFile(
+        join(urlNavigationDir, `${name}-recording-checkpoints.json`),
+        `${JSON.stringify(evidence, null, 2)}\n`,
+      );
+      await writeFile(
+        join(urlNavigationDir, 'summary.json'),
+        `${JSON.stringify(
+          { sourceNavigations, sourceStartTimestamp },
+          null,
+          2,
+        )}\n`,
+      );
+      return { ...recording, evidence };
+    },
+    { recordVideo: revision === 'candidate', outputDir: urlNavigationDir },
+  );
+}
+
+async function replayUrlMetaNavigation(browser, bundle, recording) {
+  const name = 'url-meta-navigation';
+  const checkpoint = recording.evidence.checkpoint;
+  const result = await browserCase(
+    browser,
+    `${name}-seek`,
+    async (page) => {
+      await page.addScriptTag({ path: bundle });
+      await page.evaluate((events) => {
+        window.__replayer = new window.rrweb.Replayer(events, {
+          root: document.querySelector('#player'),
+          showWarning: true,
+        });
+        window.__replayer.play(0);
+      }, recording.events);
+      await page.waitForFunction(() =>
+        window.__replayer.iframe.contentDocument.querySelector(
+          '#navigation-heading',
+        ),
+      );
+      assert.equal(
+        await page.locator('iframe').getAttribute('sandbox'),
+        'allow-same-origin',
+        `${name}: replay sandbox policy`,
+      );
+      const offset = checkpoint.timestamp - recording.events[0].timestamp + 1;
+      await page.evaluate((time) => window.__replayer.pause(time), offset);
+      await page.evaluate(
+        () =>
+          new Promise((done) =>
+            requestAnimationFrame(() => requestAnimationFrame(done)),
+          ),
+      );
+      const iframe = page.locator('iframe');
+      const actual = await iframe.evaluate((frame) => {
+        const doc = frame.contentDocument;
+        return {
+          heading: doc.querySelector('#navigation-heading').textContent,
+          note: doc.querySelector('#navigation-note').textContent,
+        };
+      });
+      assert.deepEqual(
+        actual,
+        checkpoint.expected,
+        `${name}: seek after standalone Meta restores initial snapshot and post-navigation mutations`,
+      );
+      await iframe.screenshot({
+        path: join(urlNavigationDir, `${name}-seek.png`),
+      });
+      await writeFile(
+        join(urlNavigationDir, `${name}-seek-checkpoint.json`),
+        `${JSON.stringify({ ...checkpoint, offset, actual }, null, 2)}\n`,
+      );
+      await page.evaluate(() => window.__replayer.destroy());
+      return { name, status: 'passed', seekOffset: offset, actual };
+    },
+    { outputDir: urlNavigationDir },
+  );
+  await writeFile(
+    join(urlNavigationDir, `${name}-comparison.json`),
+    `${JSON.stringify({ ...recording.evidence, replay: result }, null, 2)}\n`,
+  );
+  return result;
+}
+
 await rm(artifactDir, { recursive: true, force: true });
 await mkdir(artifactDir, { recursive: true });
 const scratch = await mkdtemp(join(tmpdir(), 'rrweb-compatibility-'));
@@ -361,7 +619,16 @@ try {
   );
   functionalStatus = 'passed';
 
+  const navigationRecording = await captureUrlMetaNavigation(
+    browser,
+    bundle,
+    revision,
+  );
   if (!baselineRoot) {
+    results.push(
+      await replayUrlMetaNavigation(browser, bundle, navigationRecording),
+    );
+
     const { stdout } = await run('npm', [
       'pack',
       released.package,

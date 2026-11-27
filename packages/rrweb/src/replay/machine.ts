@@ -60,8 +60,8 @@ export type PlayerState =
     };
 
 /**
- * If the array have multiple meta and fullsnapshot events,
- * return the events from last meta to the end.
+ * If the array has multiple full snapshots, return the events from the Meta
+ * event paired with the last full snapshot at or before the baseline time.
  */
 export function discardPriorSnapshots(
   events: eventWithTime[],
@@ -69,10 +69,16 @@ export function discardPriorSnapshots(
 ): eventWithTime[] {
   for (let idx = events.length - 1; idx >= 0; idx--) {
     const event = events[idx];
-    if (event.type === EventType.Meta) {
-      if (event.timestamp <= baselineTime) {
-        return events.slice(idx);
+    if (
+      event.type === EventType.FullSnapshot &&
+      event.timestamp <= baselineTime
+    ) {
+      for (let snapshotStart = idx - 1; snapshotStart >= 0; snapshotStart--) {
+        if (events[snapshotStart].type === EventType.Meta) {
+          return events.slice(snapshotStart);
+        }
       }
+      return events.slice(idx);
     }
   }
   return events;

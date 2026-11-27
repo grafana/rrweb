@@ -5,42 +5,55 @@ import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { chromium } from 'playwright';
 
-const [inputs, recordingPath, sourceVideo, output] = process.argv
-  .slice(2)
-  .map((path) => resolve(path));
+const [inputs, recordingPath, sourceVideo, output, baseRecordingPath] =
+  process.argv.slice(2).map((path) => resolve(path));
 assert.ok(
   inputs && recordingPath && sourceVideo && output,
-  'usage: replay-comparison-video.mjs <revision artifacts> <events.json> <fixture-interaction.webm> <output.webm>',
+  'usage: replay-comparison-video.mjs <revision artifacts> <candidate events.json> <source.webm> <output.webm> [base events.json]',
 );
 const run = promisify(execFile);
 const framesPerSecond = 12;
 const panelWidth = 960;
 const headerHeight = 48;
-const events = JSON.parse(await readFile(recordingPath, 'utf8')).map(
-  ({ event }) => event,
-);
-const replayNavigations = events.filter((event) => event.type === 4);
-const [meta] = replayNavigations;
-const fullSnapshot = events.find((event) => event.type === 2);
-assert.ok(
-  meta && fullSnapshot,
-  'Video requires a recording with viewport metadata and a full snapshot',
-);
-const { width, height } = meta.data;
-const { sourceNavigations = [] } = JSON.parse(
-  await readFile(join(dirname(recordingPath), 'summary.json'), 'utf8').catch(
-    (error) => {
-      if (error.code === 'ENOENT') return '{}';
-      throw error;
-    },
-  ),
-);
-const duration = events.at(-1).timestamp - events[0].timestamp;
-const firstFrame = fullSnapshot.timestamp - events[0].timestamp + 32;
-assert.ok(
-  Number.isFinite(duration) && duration > firstFrame,
-  'Video requires a timed recording',
-);
+async function readRecording(path) {
+  const events = JSON.parse(await readFile(path, 'utf8')).map(
+    (recordedEvent) => recordedEvent.event ?? recordedEvent,
+  );
+  const navigations = events.filter((event) => event.type === 4);
+  const [meta] = navigations;
+  const fullSnapshot = events.find((event) => event.type === 2);
+  assert.ok(meta && fullSnapshot, `${path}: missing Meta or full snapshot`);
+  const { sourceNavigations = [], sourceStartTimestamp } = JSON.parse(
+    await readFile(join(dirname(path), 'summary.json'), 'utf8').catch(
+      (error) => {
+        if (error.code === 'ENOENT') return '{}';
+        throw error;
+      },
+    ),
+  );
+  const start = events[0].timestamp;
+  const firstFrame =
+    (sourceStartTimestamp ?? fullSnapshot.timestamp) - start + 32;
+  const duration = events.at(-1).timestamp - start - firstFrame;
+  assert.ok(duration > 0, `${path}: missing timed recording`);
+  return {
+    events,
+    navigations,
+    meta,
+    sourceNavigations,
+    start,
+    firstFrame,
+    duration,
+  };
+}
+
+const candidate = await readRecording(recordingPath);
+const base = baseRecordingPath
+  ? await readRecording(baseRecordingPath)
+  : candidate;
+const { width, height } = candidate.meta.data;
+assert.equal(base.meta.data.width, width);
+assert.equal(base.meta.data.height, height);
 
 async function findSourceStart() {
   const scanSeconds = 10;
@@ -87,12 +100,16 @@ async function openLabels(browser) {
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   </style>
   <section>Source · Playwright<span class="address"></span></section>
-  <section>Base · rrweb replay<span class="address"></span></section>
-  <section>Candidate · rrweb replay<span class="address"></span></section>`);
+  <section>Base · ${
+    baseRecordingPath ? 'recorded Meta URL' : 'rrweb replay'
+  }<span class="address"></span></section>
+  <section>Candidate · ${
+    baseRecordingPath ? 'recorded Meta URL' : 'rrweb replay'
+  }<span class="address"></span></section>`);
   return page;
 }
 
-async function openPlayer(browser, revision, label) {
+async function openPlayer(browser, revision, label, { events, firstFrame }) {
   const context = await browser.newContext({
     viewport: { width, height },
     serviceWorkers: 'block',
@@ -139,29 +156,30 @@ let browser;
 try {
   browser = await chromium.launch();
   const players = await Promise.all([
-    openPlayer(browser, 'base', 'Base'),
-    openPlayer(browser, 'candidate', 'Candidate'),
+    openPlayer(browser, 'base', 'Base', base),
+    openPlayer(browser, 'candidate', 'Candidate', candidate),
   ]);
   const labels = await openLabels(browser);
-  // Advance both players to the same recording time before taking each pair of frames.
+  // Each recording has its own time origin. Align them to the fixture reveal.
   const interval = 1000 / framesPerSecond;
-  const frameCount = Math.ceil((duration - firstFrame) / interval) + 2;
-  let offset = firstFrame;
+  const frameCount = Math.ceil(candidate.duration / interval) + 2;
+  let offset = 0;
   let lastAddresses;
   let lastLabelFrame;
   for (let frame = 0; frame < frameCount; frame++) {
-    const nextOffset = firstFrame + Math.round(frame * interval);
-    const frameTimestamp = events[0].timestamp + nextOffset;
-    const sourceHref = sourceNavigations.findLast(
-      ({ timestamp }) => timestamp <= frameTimestamp,
+    const nextOffset = Math.round(frame * interval);
+    const sourceHref = candidate.sourceNavigations.findLast(
+      ({ timestamp }) =>
+        timestamp <= candidate.start + candidate.firstFrame + nextOffset,
     )?.href;
-    const replayHref = replayNavigations.findLast(
-      ({ timestamp }) => timestamp <= frameTimestamp,
-    )?.data.href;
     const addresses = [
       sourceHref || 'URL unavailable',
-      replayHref || 'URL omitted',
-      replayHref || 'URL omitted',
+      ...[base, candidate].map(
+        ({ navigations, start, firstFrame }) =>
+          navigations.findLast(
+            ({ timestamp }) => timestamp <= start + firstFrame + nextOffset,
+          )?.data.href || 'URL omitted',
+      ),
     ];
     const frameNumber = String(frame).padStart(5, '0');
     const labelFrame = join(scratch, `labels-${frameNumber}.png`);
@@ -207,7 +225,7 @@ try {
       '-loglevel',
       'error',
       '-ss',
-      String(sourceStart),
+      String(sourceStart + (baseRecordingPath ? 0.032 : 0)),
       '-i',
       sourceVideo,
       '-framerate',

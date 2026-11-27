@@ -2507,6 +2507,14 @@ exports[`record integration tests > can record clicks 1`] = `
       \\"id\\": 21,
       \\"pointerType\\": 0
     }
+  },
+  {
+    \\"type\\": 4,
+    \\"data\\": {
+      \\"href\\": \\"about:blank\\",
+      \\"width\\": 1920,
+      \\"height\\": 1080
+    }
   }
 ]"
 `;

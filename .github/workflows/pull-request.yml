@@ -229,6 +229,27 @@ jobs:
             replay-inputs replay-report/candidate/events.json \
             replay-report/candidate/fixture-interaction.webm replay-report/replay-comparison.webm
 
+      - name: Render URL navigation three-view video
+        id: render-url-meta-comparison
+        if: >-
+          ${{ !cancelled() &&
+              hashFiles('replay-inputs/rrweb-revision-base/rrweb.umd.cjs') != '' &&
+              hashFiles('replay-report/base/compatibility/url-navigation/url-meta-navigation-events.json') != '' &&
+              hashFiles('replay-report/candidate/compatibility/url-navigation/url-meta-navigation-events.json') != '' &&
+              hashFiles('replay-report/candidate/compatibility/url-navigation/url-meta-navigation.webm') != '' }}
+        continue-on-error: true
+        timeout-minutes: 6
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          node packages/rrweb/test/e2e/replay-comparison-video.mjs \
+            replay-inputs replay-report/candidate/compatibility/url-navigation/url-meta-navigation-events.json \
+            replay-report/candidate/compatibility/url-navigation/url-meta-navigation.webm \
+            replay-report/candidate/compatibility/url-navigation/url-meta-navigation-comparison.webm \
+            replay-report/base/compatibility/url-navigation/url-meta-navigation-events.json
+
       - name: Upload replay and comparison artifacts
         id: upload-replay
         if: ${{ !cancelled() }}
@@ -260,6 +281,14 @@ jobs:
           comparison: replay-report/replay-comparison.webm
           source: replay-report/candidate/fixture-interaction.webm
 
+      - name: Publish URL navigation videos
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/upload-replay-videos
+        with:
+          test-id: url-navigation
+          comparison: replay-report/candidate/compatibility/url-navigation/url-meta-navigation-comparison.webm
+          source: replay-report/candidate/compatibility/url-navigation/url-meta-navigation.webm
+
       - name: Upload base checkpoint screenshot
         id: base-screenshot
         if: ${{ !cancelled() }}
@@ -289,6 +318,8 @@ jobs:
         run: |
           test -s replay-report/candidate/fixture-interaction.webm
           test -s replay-report/replay-comparison.webm
+          test -s replay-report/candidate/compatibility/url-navigation/url-meta-navigation.webm
+          test -s replay-report/candidate/compatibility/url-navigation/url-meta-navigation-comparison.webm
 
   replay-comment:
     name: Link replay artifacts

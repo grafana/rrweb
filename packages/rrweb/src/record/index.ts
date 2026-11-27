@@ -420,6 +420,61 @@ function record<T = eventWithTime>(
   try {
     const handlers: listenerHandler[] = [];
 
+    const observeUrlChanges = () => {
+      let lastMetaHref = window.location.href;
+      let active = true;
+      const emitMetaIfUrlChanged = () => {
+        if (!active) {
+          return;
+        }
+        const href = window.location.href;
+        if (href === lastMetaHref) {
+          return;
+        }
+        lastMetaHref = href;
+        try {
+          wrappedEmit({
+            type: EventType.Meta,
+            data: {
+              href,
+              width: getWindowWidth(),
+              height: getWindowHeight(),
+            },
+          });
+        } catch (error) {
+          console.error(error);
+        }
+      };
+      handlers.push(() => {
+        active = false;
+      });
+      handlers.push(on('popstate', emitMetaIfUrlChanged, window));
+      handlers.push(on('hashchange', emitMetaIfUrlChanged, window));
+
+      const historyMethods = ['pushState', 'replaceState'] as const;
+      historyMethods.forEach((method) => {
+        const original = window.history[method];
+        const wrapped = function (
+          this: History,
+          ...args: Parameters<History[typeof method]>
+        ) {
+          const result = original.apply(this, args);
+          emitMetaIfUrlChanged();
+          return result;
+        };
+        try {
+          window.history[method] = wrapped as History[typeof method];
+          handlers.push(() => {
+            if (window.history[method] === wrapped) {
+              window.history[method] = original;
+            }
+          });
+        } catch (error) {
+          console.warn(error);
+        }
+      });
+    };
+
     const observe = (doc: Document) => {
       return callbackWrapper(initObservers)(
         {
@@ -566,6 +621,7 @@ function record<T = eventWithTime>(
 
     const init = () => {
       takeFullSnapshot();
+      observeUrlChanges();
       handlers.push(observe(document));
       recording = true;
     };

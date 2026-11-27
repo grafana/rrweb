@@ -121,6 +121,76 @@ describe('record', function (this: ISuite) {
     ).toEqual(1);
   });
 
+  it('emits meta events for History API and browser URL changes', async () => {
+    await ctx.page.evaluate(() => {
+      const { record } = (window as unknown as IWindow).rrweb;
+      record({
+        emit: (window as unknown as IWindow).emit,
+      });
+    });
+
+    await ctx.page.evaluate(() => {
+      window.history.pushState({}, '', '#first');
+      window.history.replaceState({}, '', '#second');
+      window.location.hash = '#third';
+      window.history.pushState({}, '', '#fourth');
+    });
+    await ctx.page.evaluate(async () => {
+      await new Promise<void>((resolve) => {
+        window.addEventListener('popstate', () => resolve(), { once: true });
+        window.history.back();
+      });
+    });
+    await ctx.page.waitForTimeout(10);
+
+    const metaEvents = ctx.events.filter(
+      (event: eventWithTime) => event.type === EventType.Meta,
+    ) as Extract<eventWithTime, { type: EventType.Meta }>[];
+    expect(metaEvents.map((event) => event.data.href)).toEqual([
+      'about:blank',
+      'about:blank#first',
+      'about:blank#second',
+      'about:blank#third',
+      'about:blank#fourth',
+      'about:blank#third',
+    ]);
+  });
+
+  it('stops emitting URL meta events and restores History API methods', async () => {
+    const stopped = await ctx.page.evaluate(() => {
+      const history = window.history;
+      const originalPushState = history.pushState;
+      const originalReplaceState = history.replaceState;
+      const stop = (window as unknown as IWindow).rrweb.record({
+        emit: (window as unknown as IWindow).emit,
+      });
+      stop?.();
+      return {
+        pushStateRestored: history.pushState === originalPushState,
+        replaceStateRestored: history.replaceState === originalReplaceState,
+      };
+    });
+    await ctx.page.waitForTimeout(10);
+    const metaCountBeforeNavigation = ctx.events.filter(
+      (event: eventWithTime) => event.type === EventType.Meta,
+    ).length;
+
+    await ctx.page.evaluate(() => {
+      window.history.pushState({}, '', '#after-stop');
+    });
+    await ctx.page.waitForTimeout(10);
+
+    expect(stopped).toEqual({
+      pushStateRestored: true,
+      replaceStateRestored: true,
+    });
+    expect(
+      ctx.events.filter(
+        (event: eventWithTime) => event.type === EventType.Meta,
+      ),
+    ).toHaveLength(metaCountBeforeNavigation);
+  });
+
   it('can checkout full snapshot by count', async () => {
     await ctx.page.evaluate(() => {
       const { record } = (window as unknown as IWindow).rrweb;
