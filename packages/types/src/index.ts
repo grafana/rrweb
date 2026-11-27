@@ -527,24 +527,32 @@ export type canvasManagerMutationCallback = (
   p: canvasMutationWithType,
 ) => void;
 
-export type ImageBitmapDataURLWorkerParams = {
-  id: number;
-  requestId?: number;
-  bitmap: ImageBitmap;
-  width: number;
-  height: number;
-  dataURLOptions: DataURLOptions;
-  maxBytes?: number;
-};
+export type ImageBitmapDataURLWorkerParams =
+  | {
+      id: number;
+      forget: true;
+    }
+  | {
+      id: number;
+      requestId?: number;
+      bitmap: ImageBitmap;
+      width: number;
+      height: number;
+      dataURLOptions: DataURLOptions;
+      maxBytes?: number;
+      force?: boolean;
+    };
 
 export type ImageBitmapDataURLWorkerResponse =
   | {
       id: number;
       requestId?: number;
+      status?: 'unchanged' | 'oversize' | 'unsupported' | 'error';
     }
   | {
       id: number;
       requestId?: number;
+      status?: 'unchanged' | 'oversize' | 'unsupported' | 'error';
       type: string;
       base64: string;
       width: number;

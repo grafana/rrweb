@@ -242,7 +242,6 @@ jobs:
               hashFiles('replay-inputs/rrweb-revision-base/rrweb.umd.cjs') != '' &&
               hashFiles('replay-report/candidate/canvas-raster/events.json') != '' &&
               hashFiles('replay-report/candidate/canvas-raster/source.webm') != '' }}
-        continue-on-error: true
         timeout-minutes: 6
         run: |
           if ! command -v ffmpeg >/dev/null; then

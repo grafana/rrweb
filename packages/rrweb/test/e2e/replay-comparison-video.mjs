@@ -63,6 +63,11 @@ if (canvasRaster) {
   assert.equal(canvasImageSources.length, 0);
 }
 const lastRasterSrc = canvasRaster ? canvasImageSources.at(-1) : undefined;
+const firstRasterEvent = canvasRaster
+  ? events.find((event) => collectCanvasImageSources([event]).length > 0)
+  : undefined;
+assert.ok(!canvasRaster || firstRasterEvent, 'Canvas image event is missing');
+const firstRasterSrc = canvasRaster ? canvasImageSources[0] : undefined;
 const rasterCanvasId = 'raster-snapshot-canvas';
 const rasterWidth = canvasRaster ? 1280 : undefined;
 const rasterHeight = canvasRaster ? 720 : undefined;
@@ -97,8 +102,10 @@ if (canvasRaster) {
     'Canvas raster comparison must be at least ten seconds',
   );
 }
-const firstFrame =
-  fullSnapshot.timestamp - events[0].timestamp + 32 + (canvasRaster ? 100 : 0);
+const firstFrame = Math.max(
+  fullSnapshot.timestamp - events[0].timestamp + 32,
+  canvasRaster ? firstRasterEvent.timestamp - events[0].timestamp + 64 : 0,
+);
 assert.ok(
   Number.isFinite(duration) && duration > firstFrame,
   'Video requires a timed recording',
@@ -197,21 +204,33 @@ async function openPlayer(browser, revision, label) {
     `${label} did not rebuild the fixture`,
   );
   if (canvasRaster) {
-    await page.waitForFunction(
-      () => {
-        const image = window.__videoReplayer.iframe.contentDocument
-          .getElementById('raster-snapshot-canvas')
-          ?.querySelector('img');
-        return (
-          image?.complete && image.src.startsWith('data:image/webp;base64,')
-        );
-      },
-      null,
-      { timeout: 5000 },
-    );
+    await waitForRasterImage(page, firstRasterSrc);
     initialRasterPixels = await assertRasterPixels(page, 'initial');
   }
   return { page, errors, label, initialRasterPixels };
+}
+
+async function waitForRasterImage(page, expectedSrc) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const ready = await page.evaluate(
+      ({ canvasId, src }) => {
+        const image = window.__videoReplayer.iframe.contentDocument
+          .getElementById(canvasId)
+          ?.querySelector('img');
+        return (
+          image?.complete &&
+          image.src === src &&
+          image.naturalWidth === 1280 &&
+          image.naturalHeight === 720
+        );
+      },
+      { canvasId: rasterCanvasId, src: expectedSrc },
+    );
+    if (ready) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('Canvas image did not decode before the replay checkpoint');
 }
 
 async function assertRasterPixels(page, frame) {
@@ -361,26 +380,7 @@ try {
   }
   if (canvasRaster) {
     for (const player of players) {
-      await player.page.waitForFunction(
-        ({ canvasId, expectedSrc, expectedWidth, expectedHeight }) => {
-          const image = window.__videoReplayer.iframe.contentDocument
-            .getElementById(canvasId)
-            ?.querySelector('img');
-          return (
-            image?.complete &&
-            image.src === expectedSrc &&
-            image.naturalWidth === expectedWidth &&
-            image.naturalHeight === expectedHeight
-          );
-        },
-        {
-          canvasId: rasterCanvasId,
-          expectedSrc: lastRasterSrc,
-          expectedWidth: rasterWidth,
-          expectedHeight: rasterHeight,
-        },
-        { timeout: 5000 },
-      );
+      await waitForRasterImage(player.page, lastRasterSrc);
       const finalRasterPixels = await assertRasterPixels(
         player.page,
         `${player.label} final`,

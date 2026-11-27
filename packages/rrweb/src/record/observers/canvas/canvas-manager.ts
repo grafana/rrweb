@@ -33,12 +33,30 @@ const MAX_SNAPSHOT_WIDTH = 8192;
 const MAX_SNAPSHOT_HEIGHT = 8192;
 const MAX_SNAPSHOT_PIXELS = 16_777_216;
 const MAX_ACTIVE_SNAPSHOT_CANVASES = 4;
+const MAX_SNAPSHOT_CANVAS_CANDIDATES = 64;
+const INITIAL_SNAPSHOT_RETRY_DELAY_MS = 500;
+const MAX_SNAPSHOT_RETRY_DELAY_MS = 10_000;
+const OVERSIZE_SNAPSHOT_RETRY_DELAY_MS = 1000;
 
 type CanvasImageSnapshotState = {
   canvas: HTMLCanvasElement;
+  width: number;
+  height: number;
   pixels: number;
   generation: number;
   image?: HTMLImageElement;
+  lastDataURL?: string;
+  hasRecordedFrame?: boolean;
+  retryAfter?: number;
+  retryDelayMs?: number;
+};
+
+type PendingCanvasImageRequest = {
+  id: number;
+  generation: number;
+  pixels: number;
+  state: CanvasImageSnapshotState;
+  timeoutId: number;
 };
 
 export class CanvasManager {
@@ -139,41 +157,211 @@ export class CanvasManager {
     );
     const snapshotInProgressMap: Map<number, boolean> = new Map();
     const imageStates = new Map<number, CanvasImageSnapshotState>();
-    const pendingImageRequests = new Map<
-      number,
-      { id: number; generation: number; state: CanvasImageSnapshotState }
-    >();
-    let activeImagePixels = 0;
+    const pendingImageRequests = new Map<number, PendingCanvasImageRequest>();
+    const pendingImageByCanvasId = new Map<number, number>();
     let nextRequestId = 0;
     let pendingImageWork = 0;
     let disposed = false;
+    let workerFailed = false;
     const worker =
       new ImageBitmapDataURLWorker() as ImageBitmapDataURLRequestWorker;
+    const removeFallbackImage = (state: CanvasImageSnapshotState) => {
+      state.image?.removeAttribute('src');
+      state.image?.remove();
+      state.image = undefined;
+      state.lastDataURL = undefined;
+      state.hasRecordedFrame = false;
+    };
+    const deferCanvasImageRequest = (state: CanvasImageSnapshotState) => {
+      state.retryDelayMs = Math.min(
+        state.retryDelayMs === undefined
+          ? INITIAL_SNAPSHOT_RETRY_DELAY_MS
+          : state.retryDelayMs * 2,
+        MAX_SNAPSHOT_RETRY_DELAY_MS,
+      );
+      state.retryAfter = win.performance.now() + state.retryDelayMs;
+      removeFallbackImage(state);
+    };
+    const resetCanvasImageRetry = (state: CanvasImageSnapshotState) => {
+      state.retryAfter = undefined;
+      state.retryDelayMs = undefined;
+    };
+
+    const forgetWorkerFrame = (id: number) => {
+      if (workerFailed || disposed) return;
+      try {
+        worker.postMessage({ id, forget: true });
+      } catch {
+        // The worker may have failed between a response and cleanup.
+      }
+    };
+
+    const getReservedImagePixels = () => {
+      const pixelsById = new Map<number, number>();
+      imageStates.forEach((state, id) => pixelsById.set(id, state.pixels));
+      pendingImageRequests.forEach((request) => {
+        pixelsById.set(
+          request.id,
+          Math.max(pixelsById.get(request.id) ?? 0, request.pixels),
+        );
+      });
+      return [...pixelsById.values()].reduce((sum, pixels) => sum + pixels, 0);
+    };
+
+    const getReservedCanvasCount = () => {
+      const ids = new Set(imageStates.keys());
+      pendingImageRequests.forEach((request) => ids.add(request.id));
+      return ids.size;
+    };
+
+    const finishImageRequest = (requestId: number) => {
+      const request = pendingImageRequests.get(requestId);
+      if (!request) return undefined;
+      window.clearTimeout(request.timeoutId);
+      pendingImageRequests.delete(requestId);
+      if (pendingImageByCanvasId.get(request.id) === requestId) {
+        pendingImageByCanvasId.delete(request.id);
+      }
+      pendingImageWork = Math.max(0, pendingImageWork - 1);
+      if (!disposed) {
+        if (
+          imageStates.get(request.id) === request.state &&
+          request.state.generation === request.generation
+        ) {
+          snapshotInProgressMap.set(request.id, false);
+        } else {
+          snapshotInProgressMap.delete(request.id);
+        }
+      }
+      return request;
+    };
+
+    const failPendingImageRequests = () => {
+      if (workerFailed || disposed) return;
+      workerFailed = true;
+      worker.terminate();
+      imageStates.forEach(removeFallbackImage);
+      imageStates.clear();
+      [...pendingImageRequests.keys()].forEach(finishImageRequest);
+    };
+
+    const removeImageState = (
+      id: number,
+      expectedState?: CanvasImageSnapshotState,
+    ) => {
+      const state = imageStates.get(id);
+      if (!state || (expectedState && state !== expectedState)) return;
+      imageStates.delete(id);
+      state.generation++;
+      removeFallbackImage(state);
+      if (!pendingImageByCanvasId.has(id)) snapshotInProgressMap.delete(id);
+      forgetWorkerFrame(id);
+    };
+
+    const getImageState = (
+      canvas: HTMLCanvasElement,
+      id: number,
+      width: number,
+      height: number,
+    ): CanvasImageSnapshotState | null => {
+      let state = imageStates.get(id);
+      if (
+        state &&
+        (state.canvas !== canvas ||
+          state.width !== width ||
+          state.height !== height)
+      ) {
+        removeImageState(id, state);
+        state = undefined;
+      }
+      if (pendingImageByCanvasId.has(id)) {
+        return null;
+      }
+
+      const pixels = width * height;
+      const reservedPixels = getReservedImagePixels();
+      const reservedCanvases = getReservedCanvasCount();
+      const previousPixels = state?.pixels ?? 0;
+      if (
+        reservedPixels - previousPixels + pixels > MAX_SNAPSHOT_PIXELS ||
+        (!state && reservedCanvases >= MAX_ACTIVE_SNAPSHOT_CANVASES)
+      ) {
+        if (state) removeImageState(id, state);
+        return null;
+      }
+
+      if (!state) {
+        state = { canvas, width, height, pixels: 0, generation: 0 };
+        imageStates.set(id, state);
+      }
+      state.width = width;
+      state.height = height;
+      state.pixels = pixels;
+      return state;
+    };
+
+    const updateFallbackImageSize = (state: CanvasImageSnapshotState) => {
+      const image = state.image;
+      if (!image || image.parentElement !== state.canvas) return;
+      image.style.width = `${state.canvas.clientWidth}px`;
+      image.style.height = `${state.canvas.clientHeight}px`;
+    };
+
     worker.onmessage = (e) => {
       const { id } = e.data;
 
       if (options.recordCanvasAsImage) {
         const requestId = e.data.requestId;
         if (typeof requestId !== 'number') return;
-        const request = pendingImageRequests.get(requestId);
-        pendingImageRequests.delete(requestId);
-        if (request) pendingImageWork = Math.max(0, pendingImageWork - 1);
-        if (!request || disposed) return;
+        const request = finishImageRequest(requestId);
+        if (!request || disposed) {
+          forgetWorkerFrame(id);
+          return;
+        }
 
         const { state, generation } = request;
         if (imageStates.get(id) !== state || state.generation !== generation) {
+          forgetWorkerFrame(id);
           return;
         }
-        snapshotInProgressMap.set(id, false);
+
+        if (e.data.status === 'unsupported') {
+          failPendingImageRequests();
+          return;
+        }
+        if (e.data.status === 'oversize') {
+          resetCanvasImageRetry(state);
+          state.retryAfter =
+            win.performance.now() + OVERSIZE_SNAPSHOT_RETRY_DELAY_MS;
+          removeFallbackImage(state);
+          forgetWorkerFrame(id);
+          return;
+        }
+        if (e.data.status === 'error') {
+          deferCanvasImageRequest(state);
+          forgetWorkerFrame(id);
+          return;
+        }
+        if (e.data.status === 'unchanged') {
+          resetCanvasImageRetry(state);
+          return;
+        }
+        if (!('base64' in e.data)) {
+          failPendingImageRequests();
+          return;
+        }
         if (
-          !('base64' in e.data) ||
           e.data.type !== 'image/webp' ||
-          e.data.base64.length > MAX_SNAPSHOT_BASE64_LENGTH ||
+          e.data.base64.length + WEBP_DATA_URL_PREFIX.length >
+            MAX_SNAPSHOT_DATA_URL_LENGTH ||
           e.data.width !== state.canvas.width ||
           e.data.height !== state.canvas.height ||
           !state.canvas.isConnected ||
           this.mirror.getId(state.canvas) !== id
         ) {
+          resetCanvasImageRetry(state);
+          removeFallbackImage(state);
+          forgetWorkerFrame(id);
           return;
         }
 
@@ -194,9 +382,11 @@ export class CanvasManager {
         }
         image.width = e.data.width;
         image.height = e.data.height;
-        image.style.width = `${state.canvas.clientWidth}px`;
-        image.style.height = `${state.canvas.clientHeight}px`;
+        updateFallbackImageSize(state);
         image.src = `${WEBP_DATA_URL_PREFIX}${e.data.base64}`;
+        state.lastDataURL = image.getAttribute('src') ?? undefined;
+        state.hasRecordedFrame = true;
+        resetCanvasImageRetry(state);
         return;
       }
 
@@ -234,58 +424,13 @@ export class CanvasManager {
       });
     };
 
-    const removeImageState = (
-      id: number,
-      expectedState?: CanvasImageSnapshotState,
-    ) => {
-      const state = imageStates.get(id);
-      if (!state || (expectedState && state !== expectedState)) return;
-      imageStates.delete(id);
-      state.generation++;
-      activeImagePixels -= state.pixels;
-      state.image?.removeAttribute('src');
-      state.image?.remove();
-      state.image = undefined;
-      snapshotInProgressMap.delete(id);
-    };
-
-    const getImageState = (
-      canvas: HTMLCanvasElement,
-      id: number,
-      pixels: number,
-    ): CanvasImageSnapshotState | null => {
-      let state = imageStates.get(id);
-      if (state && state.canvas !== canvas) {
-        removeImageState(id, state);
-        state = undefined;
-      }
-      if (state) {
-        imageStates.delete(id);
-        imageStates.set(id, state);
-      } else {
-        state = { canvas, pixels: 0, generation: 0 };
-        imageStates.set(id, state);
-      }
-
-      const projectedPixels = () => activeImagePixels - state.pixels + pixels;
-      while (
-        imageStates.size > MAX_ACTIVE_SNAPSHOT_CANVASES ||
-        projectedPixels() > MAX_SNAPSHOT_PIXELS
-      ) {
-        const oldestId = [...imageStates.keys()].find(
-          (candidateId) => candidateId !== id,
-        );
-        if (oldestId === undefined) {
-          removeImageState(id, state);
-          return null;
-        }
-        removeImageState(oldestId);
-      }
-
-      activeImagePixels = projectedPixels();
-      state.pixels = pixels;
-      return state;
-    };
+    if (options.recordCanvasAsImage) {
+      worker.onerror = failPendingImageRequests;
+      worker.onmessageerror = failPendingImageRequests;
+    } else {
+      worker.onerror = () => undefined;
+      worker.onmessageerror = () => undefined;
+    }
 
     const timeBetweenSnapshots = 1000 / fps;
     let lastSnapshotTime = 0;
@@ -293,11 +438,23 @@ export class CanvasManager {
 
     const getCanvas = (): HTMLCanvasElement[] => {
       const matchedCanvas: HTMLCanvasElement[] = [];
-      win.document.querySelectorAll('canvas').forEach((canvas) => {
+      const canvases = win.document.getElementsByTagName('canvas');
+      const maxCanvasCandidates = options.recordCanvasAsImage
+        ? MAX_SNAPSHOT_CANVAS_CANDIDATES
+        : canvases.length;
+      for (
+        let index = 0;
+        index < canvases.length &&
+        index < maxCanvasCandidates &&
+        (!options.recordCanvasAsImage ||
+          matchedCanvas.length < MAX_ACTIVE_SNAPSHOT_CANVASES);
+        index++
+      ) {
+        const canvas = canvases[index];
         if (!isBlocked(canvas, blockClass, blockSelector, true)) {
           matchedCanvas.push(canvas);
         }
-      });
+      }
       return matchedCanvas;
     };
 
@@ -323,17 +480,22 @@ export class CanvasManager {
         });
       }
 
-      getCanvas()
-        .slice(
-          0,
-          options.recordCanvasAsImage
-            ? MAX_ACTIVE_SNAPSHOT_CANVASES
-            : undefined,
-        )
+      const canvases = getCanvas();
+      const canvasesToSnapshot = options.recordCanvasAsImage
+        ? canvases.slice(0, MAX_ACTIVE_SNAPSHOT_CANVASES)
+        : canvases;
+      if (options.recordCanvasAsImage) {
+        const selectedCanvases = new Set(canvasesToSnapshot);
+        imageStates.forEach((state, id) => {
+          if (!selectedCanvases.has(state.canvas)) removeImageState(id, state);
+        });
+      }
+
+      canvasesToSnapshot
         // eslint-disable-next-line @typescript-eslint/no-misused-promises
         .forEach(async (canvas: HTMLCanvasElement) => {
           const id = this.mirror.getId(canvas);
-          if (id === -1) return;
+          if (id === -1 || workerFailed) return;
 
           // The browser throws if the canvas is 0 in size
           // Uncaught (in promise) DOMException: Failed to execute 'createImageBitmap' on 'Window': The source image width is 0.
@@ -347,6 +509,12 @@ export class CanvasManager {
           let generation = 0;
           if (options.recordCanvasAsImage) {
             if (
+              workerFailed ||
+              pendingImageWork >= MAX_ACTIVE_SNAPSHOT_CANVASES
+            ) {
+              return;
+            }
+            if (
               canvas.width > MAX_SNAPSHOT_WIDTH ||
               canvas.height > MAX_SNAPSHOT_HEIGHT ||
               canvas.width * canvas.height > MAX_SNAPSHOT_PIXELS
@@ -355,21 +523,44 @@ export class CanvasManager {
               return;
             }
             state =
-              getImageState(canvas, id, canvas.width * canvas.height) ??
+              getImageState(canvas, id, canvas.width, canvas.height) ??
               undefined;
             if (!state) return;
             if (snapshotInProgressMap.get(id)) return;
-            if (pendingImageWork >= MAX_ACTIVE_SNAPSHOT_CANVASES) return;
+            if (
+              state.retryAfter !== undefined &&
+              win.performance.now() < state.retryAfter
+            ) {
+              return;
+            }
             generation = ++state.generation;
+            updateFallbackImageSize(state);
           } else if (snapshotInProgressMap.get(id)) {
             return;
           }
 
           snapshotInProgressMap.set(id, true);
-          if (options.recordCanvasAsImage) pendingImageWork++;
-          let requestId: number | undefined;
+          const requestId = options.recordCanvasAsImage
+            ? ++nextRequestId
+            : undefined;
           const width = canvas.width;
           const height = canvas.height;
+          if (options.recordCanvasAsImage && state && requestId !== undefined) {
+            const timeoutId = window.setTimeout(() => {
+              if (!pendingImageRequests.has(requestId)) return;
+              failPendingImageRequests();
+            }, 10_000);
+            pendingImageRequests.set(requestId, {
+              id,
+              generation,
+              pixels: width * height,
+              state,
+              timeoutId,
+            });
+            pendingImageByCanvasId.set(id, requestId);
+            pendingImageWork++;
+          }
+          let bitmap: ImageBitmap | undefined;
           try {
             if (['webgl', 'webgl2'].includes((canvas as ICanvas).__context)) {
               const context = canvas.getContext(
@@ -381,11 +572,15 @@ export class CanvasManager {
                 context.clear(context.COLOR_BUFFER_BIT);
               }
             }
-            const bitmap = await createImageBitmap(canvas);
+            bitmap = await createImageBitmap(canvas);
+            const imageRequestIsPending =
+              requestId !== undefined && pendingImageRequests.has(requestId);
             if (
               disposed ||
               (options.recordCanvasAsImage &&
                 (!state ||
+                  workerFailed ||
+                  !imageRequestIsPending ||
                   imageStates.get(id) !== state ||
                   state.generation !== generation ||
                   !canvas.isConnected ||
@@ -393,22 +588,9 @@ export class CanvasManager {
                   canvas.height !== height))
             ) {
               bitmap.close();
-              if (
-                !options.recordCanvasAsImage ||
-                imageStates.get(id) === state
-              ) {
-                snapshotInProgressMap.set(id, false);
-              }
-              if (options.recordCanvasAsImage) {
-                pendingImageWork = Math.max(0, pendingImageWork - 1);
-              }
+              if (requestId !== undefined) finishImageRequest(requestId);
+              else snapshotInProgressMap.set(id, false);
               return;
-            }
-            requestId = options.recordCanvasAsImage
-              ? ++nextRequestId
-              : undefined;
-            if (requestId !== undefined && state) {
-              pendingImageRequests.set(requestId, { id, generation, state });
             }
             worker.postMessage(
               {
@@ -423,17 +605,34 @@ export class CanvasManager {
                 maxBytes: options.recordCanvasAsImage
                   ? Math.floor(MAX_SNAPSHOT_BASE64_LENGTH / 4) * 3
                   : undefined,
+                force:
+                  options.recordCanvasAsImage &&
+                  Boolean(
+                    state?.hasRecordedFrame &&
+                      (!state.image ||
+                        state.image.parentElement !== canvas ||
+                        state.image.getAttribute('src') !== state.lastDataURL ||
+                        !state.lastDataURL?.startsWith(WEBP_DATA_URL_PREFIX) ||
+                        state.lastDataURL.length >
+                          MAX_SNAPSHOT_DATA_URL_LENGTH),
+                  ),
               },
               [bitmap],
             );
+            bitmap = undefined;
           } catch {
-            if (requestId !== undefined) {
-              pendingImageRequests.delete(requestId);
-              pendingImageWork = Math.max(0, pendingImageWork - 1);
-            } else if (options.recordCanvasAsImage) {
-              pendingImageWork = Math.max(0, pendingImageWork - 1);
+            try {
+              bitmap?.close();
+            } catch {
+              // The worker may already own or have closed the bitmap.
             }
-            snapshotInProgressMap.set(id, false);
+            if (requestId !== undefined) {
+              finishImageRequest(requestId);
+              if (state) deferCanvasImageRequest(state);
+              forgetWorkerFrame(id);
+            } else {
+              snapshotInProgressMap.set(id, false);
+            }
           }
         });
       if (!disposed) rafId = requestAnimationFrame(takeCanvasSnapshots);
@@ -451,9 +650,12 @@ export class CanvasManager {
         state.image?.remove();
       });
       imageStates.clear();
+      pendingImageRequests.forEach((request) =>
+        window.clearTimeout(request.timeoutId),
+      );
       pendingImageRequests.clear();
+      pendingImageByCanvasId.clear();
       snapshotInProgressMap.clear();
-      activeImagePixels = 0;
       pendingImageWork = 0;
     };
   }

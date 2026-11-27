@@ -147,6 +147,8 @@ function record<T = eventWithTime>(
     );
   }
 
+  const recordCanvasForSnapshots = recordCanvas && !recordCanvasAsImage;
+
   // reset mirror in case `record` this was called earlier
   mirror.reset();
 
@@ -337,7 +339,7 @@ function record<T = eventWithTime>(
       dataURLOptions,
       maskTextFn,
       maskInputFn,
-      recordCanvas,
+      recordCanvas: recordCanvasForSnapshots,
       inlineImages,
       sampling,
       slimDOMOptions,
@@ -384,7 +386,7 @@ function record<T = eventWithTime>(
       maskInputFn,
       slimDOM: slimDOMOptions,
       dataURLOptions,
-      recordCanvas,
+      recordCanvas: recordCanvasForSnapshots,
       inlineImages,
       onSerialize: (n) => {
         if (isSerializedIframe(n, mirror)) {
@@ -532,7 +534,7 @@ function record<T = eventWithTime>(
           inlineStylesheet,
           sampling,
           recordDOM,
-          recordCanvas,
+          recordCanvas: recordCanvasForSnapshots,
           inlineImages,
           userTriggeredOnInput,
           collectFonts,
