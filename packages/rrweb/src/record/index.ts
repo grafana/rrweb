@@ -44,7 +44,6 @@ import dom from '@grafana/rrweb-utils';
 let wrappedEmit!: (e: eventWithoutTime, isCheckout?: boolean) => void;
 
 let takeFullSnapshot!: (isCheckout?: boolean) => void;
-let canvasManager!: CanvasManager;
 let recording = false;
 
 // Multiple tools (i.e. MooTools, Prototype.js) override Array.from and drop support for the 2nd parameter
@@ -314,7 +313,7 @@ function record<T = eventWithTime>(
 
   const processedNodeManager = new ProcessedNodeManager();
 
-  canvasManager = new CanvasManager({
+  const canvasManager = new CanvasManager({
     recordCanvas,
     mutationCb: wrappedCanvasMutationEmit,
     win: window,
@@ -632,6 +631,7 @@ function record<T = eventWithTime>(
           }
         }
       });
+      if (recordCanvasAsImage) canvasManager.reset();
       processedNodeManager.destroy();
       recording = false;
       unregisterErrorHandler();

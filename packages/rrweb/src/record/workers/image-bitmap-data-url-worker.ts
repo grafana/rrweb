@@ -126,12 +126,10 @@ worker.onmessage = async function (e) {
       return postStatus(request, 'unsupported');
     }
 
-    const arrayBuffer = await blob.arrayBuffer();
-    if (maxBytes && arrayBuffer.byteLength > maxBytes) {
+    if (maxBytes && blob.size > maxBytes) {
       return postStatus(request, 'oversize');
     }
-
-    const base64 = encode(arrayBuffer);
+    const base64 = encode(await blob.arrayBuffer());
 
     // A first transparent frame needs no DOM mutation. Keep it in the cache so
     // a later identical frame can still be recognized as unchanged.

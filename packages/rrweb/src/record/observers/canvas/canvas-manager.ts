@@ -1,3 +1,4 @@
+import { markCanvasFallbackImage } from '@grafana/rrweb-snapshot';
 import type { ICanvas, Mirror } from '@grafana/rrweb-snapshot';
 import type {
   blockClass,
@@ -71,7 +72,9 @@ export class CanvasManager {
 
   public reset() {
     this.pendingCanvasMutations.clear();
-    this.resetObservers && this.resetObservers();
+    const reset = this.resetObservers;
+    this.resetObservers = undefined;
+    reset?.();
   }
 
   public freeze() {
@@ -149,6 +152,8 @@ export class CanvasManager {
       recordCanvasAsImage: boolean;
     },
   ) {
+    const worker =
+      new ImageBitmapDataURLWorker() as ImageBitmapDataURLRequestWorker;
     const canvasContextReset = initCanvasContextObserver(
       win,
       blockClass,
@@ -163,8 +168,15 @@ export class CanvasManager {
     let pendingImageWork = 0;
     let disposed = false;
     let workerFailed = false;
-    const worker =
-      new ImageBitmapDataURLWorker() as ImageBitmapDataURLRequestWorker;
+    const isCanvasBlocked = (canvas: HTMLCanvasElement) =>
+      isBlocked(canvas, blockClass, blockSelector, true);
+    const canSampleImage = (canvas: HTMLCanvasElement) =>
+      this.mirror.getId(canvas) > 0 &&
+      canvas.width > 0 &&
+      canvas.height > 0 &&
+      canvas.width <= MAX_SNAPSHOT_WIDTH &&
+      canvas.height <= MAX_SNAPSHOT_HEIGHT &&
+      canvas.width * canvas.height <= MAX_SNAPSHOT_PIXELS;
     const removeFallbackImage = (state: CanvasImageSnapshotState) => {
       state.image?.removeAttribute('src');
       state.image?.remove();
@@ -324,6 +336,10 @@ export class CanvasManager {
           forgetWorkerFrame(id);
           return;
         }
+        if (isCanvasBlocked(state.canvas)) {
+          removeImageState(id, state);
+          return;
+        }
 
         if (e.data.status === 'unsupported') {
           failPendingImageRequests();
@@ -370,6 +386,7 @@ export class CanvasManager {
           image?.removeAttribute('src');
           image?.remove();
           image = state.canvas.ownerDocument.createElement('img');
+          markCanvasFallbackImage(image);
           image.alt = '';
           image.width = e.data.width;
           image.height = e.data.height;
@@ -451,7 +468,10 @@ export class CanvasManager {
         index++
       ) {
         const canvas = canvases[index];
-        if (!isBlocked(canvas, blockClass, blockSelector, true)) {
+        if (
+          !isCanvasBlocked(canvas) &&
+          (!options.recordCanvasAsImage || canSampleImage(canvas))
+        ) {
           matchedCanvas.push(canvas);
         }
       }
@@ -480,10 +500,7 @@ export class CanvasManager {
         });
       }
 
-      const canvases = getCanvas();
-      const canvasesToSnapshot = options.recordCanvasAsImage
-        ? canvases.slice(0, MAX_ACTIVE_SNAPSHOT_CANVASES)
-        : canvases;
+      const canvasesToSnapshot = getCanvas();
       if (options.recordCanvasAsImage) {
         const selectedCanvases = new Set(canvasesToSnapshot);
         imageStates.forEach((state, id) => {
@@ -512,14 +529,6 @@ export class CanvasManager {
               workerFailed ||
               pendingImageWork >= MAX_ACTIVE_SNAPSHOT_CANVASES
             ) {
-              return;
-            }
-            if (
-              canvas.width > MAX_SNAPSHOT_WIDTH ||
-              canvas.height > MAX_SNAPSHOT_HEIGHT ||
-              canvas.width * canvas.height > MAX_SNAPSHOT_PIXELS
-            ) {
-              removeImageState(id);
               return;
             }
             state =
@@ -583,6 +592,7 @@ export class CanvasManager {
                   !imageRequestIsPending ||
                   imageStates.get(id) !== state ||
                   state.generation !== generation ||
+                  isCanvasBlocked(canvas) ||
                   !canvas.isConnected ||
                   canvas.width !== width ||
                   canvas.height !== height))

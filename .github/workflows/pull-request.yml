@@ -135,6 +135,14 @@ jobs:
         run: npm run test:replay-review -w @grafana/rrweb
         timeout-minutes: 10
 
+      - name: Record canvas raster with the base recorder
+        if: ${{ !cancelled() && matrix.revision == 'base' && steps.build.outcome == 'success' }}
+        run: npm run test:replay-canvas-raster -w @grafana/rrweb
+        timeout-minutes: 5
+        env:
+          RRWEB_CANVAS_BASE_RECORDER: ${{ env.REPLAY_STAGE }}/rrweb.umd.cjs
+          RRWEB_REPLAY_ARTIFACT_DIR: ${{ env.RRWEB_REPLAY_ARTIFACT_DIR }}/canvas-raster
+
       - name: Record canvas raster visual case
         if: ${{ !cancelled() && matrix.revision == 'candidate' && steps.fidelity.outcome != 'skipped' }}
         run: npm run test:replay-canvas-raster -w @grafana/rrweb
@@ -322,6 +330,7 @@ jobs:
         run: |
           test -s replay-report/candidate/fixture-interaction.webm
           test -s replay-report/replay-comparison.webm
+          test -s replay-inputs/rrweb-revision-base/results/canvas-raster/events.json
           test -s replay-report/candidate/canvas-raster/events.json
           test -s replay-report/candidate/canvas-raster/source.webm
           test -s replay-report/canvas-raster/canvas-raster-${GITHUB_RUN_ATTEMPT}.webm

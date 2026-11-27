@@ -7,6 +7,7 @@ import snapshot, {
   cleanupSnapshot,
   needMaskingText,
   classMatchesRegex,
+  markCanvasFallbackImage,
   IGNORED_NODE,
   genId,
 } from './snapshot';
@@ -38,6 +39,7 @@ export {
   cleanupSnapshot,
   needMaskingText,
   classMatchesRegex,
+  markCanvasFallbackImage,
   IGNORED_NODE,
   genId,
 };

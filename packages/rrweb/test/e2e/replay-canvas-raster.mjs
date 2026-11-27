@@ -6,7 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const packageDir = resolve(fileURLToPath(new URL('../..', import.meta.url)));
-const bundlePath = resolve(packageDir, 'dist/rrweb.umd.cjs');
+const baseRecorder = process.env['RRWEB_CANVAS_BASE_RECORDER'];
+const bundlePath = baseRecorder
+  ? resolve(baseRecorder)
+  : resolve(packageDir, 'dist/rrweb.umd.cjs');
 const artifactDir = resolve(
   process.env['RRWEB_REPLAY_ARTIFACT_DIR'] ??
     join(packageDir, 'test-results/replay-review/canvas-raster'),
@@ -264,18 +267,18 @@ try {
   });
   await page.goto(initialUrl);
   await page.addScriptTag({ path: bundlePath });
-  await page.evaluate(() => {
+  await page.evaluate((recordCanvasAsImage) => {
     window.__recordedEvents = [];
     window.__recordingStop = window.rrweb.record({
       recordCanvas: true,
-      recordCanvasAsImage: true,
+      ...(recordCanvasAsImage && { recordCanvasAsImage }),
       sampling: { canvas: 2 },
       dataURLOptions: { type: 'image/webp', quality: 1 },
       emit(event) {
         window.__recordedEvents.push(event);
       },
     });
-  });
+  }, !baseRecorder);
   await page.waitForFunction(() =>
     window.__recordedEvents.some((event) => event.type === 2),
   );
@@ -295,19 +298,24 @@ try {
     (left, right) => left.timestamp - right.timestamp,
   );
   const imageSources = collectCanvasImageSources(events);
-  assert.ok(
-    imageSources.length >= 12,
-    'recording should contain at least twelve sampled image mutations',
-  );
-  assert.ok(
-    new Set(imageSources).size >= 12,
-    'sampled image mutations should contain distinct frames',
-  );
-  assert.equal(
-    events.filter((event) => event.data?.source === 9).length,
-    0,
-    'image mode should emit no canvas command events',
-  );
+  const canvasCommands = events.filter((event) => event.data?.source === 9);
+  if (baseRecorder) {
+    assert.equal(imageSources.length, 0, 'base recorder emits no image frames');
+    assert.ok(
+      canvasCommands.length >= 12,
+      'base recorder samples canvas commands',
+    );
+  } else {
+    assert.ok(
+      new Set(imageSources).size >= 12,
+      'recording should contain at least twelve distinct sampled image mutations',
+    );
+    assert.equal(
+      canvasCommands.length,
+      0,
+      'image mode emits no canvas commands',
+    );
+  }
   eventPayloads = events.map((event, sequence) => ({
     fixtureId,
     sequence,
@@ -351,6 +359,7 @@ try {
       {
         testId,
         fixtureId,
+        recorder: baseRecorder ? 'base' : 'candidate',
         status: runError ? 'failed' : 'passed',
         eventCount: eventPayloads.length,
         canvasImageMutations: collectCanvasImageSources(

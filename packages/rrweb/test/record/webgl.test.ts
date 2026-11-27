@@ -430,6 +430,81 @@ describe('record webgl', function (this: ISuite) {
       ).toBe(true);
     });
 
+    it('restores the canvas context when stopped before recording starts', async () => {
+      const restored = await imageCtx.page.evaluate(() => {
+        const recorder = window as unknown as IWindow;
+        recorder.recordStop?.();
+        const prototype = HTMLCanvasElement.prototype;
+        const original = prototype.getContext;
+        Object.defineProperty(document, 'readyState', {
+          configurable: true,
+          value: 'loading',
+        });
+        try {
+          const stop = recorder.rrweb.record({
+            emit: recorder.emit,
+            recordCanvas: true,
+            recordCanvasAsImage: true,
+            sampling: { canvas: 20 },
+          });
+          const patched = prototype.getContext !== original;
+          stop?.();
+          return patched && prototype.getContext === original;
+        } finally {
+          Reflect.deleteProperty(document, 'readyState');
+        }
+      });
+      expect(restored).toBe(true);
+    });
+
+    it('drops a completed sample if its canvas becomes blocked', async () => {
+      const src = await imageCtx.page.evaluate(async () => {
+        const recorder = window as unknown as IWindow;
+        const canvas = document.querySelector<HTMLCanvasElement>('#canvas')!;
+        canvas.getContext('2d')!.fillRect(0, 0, canvas.width, canvas.height);
+        await new Promise<void>((resolve) => {
+          const observer = new MutationObserver(() => {
+            if (!canvas.querySelector('img')?.getAttribute('src')) return;
+            observer.disconnect();
+            resolve();
+          });
+          observer.observe(canvas, { childList: true, subtree: true });
+        });
+
+        const before = canvas.querySelector('img')!.getAttribute('src');
+        const postMessage = Worker.prototype.postMessage;
+        try {
+          const during = await new Promise<string | null>((resolve) => {
+            Worker.prototype.postMessage = function (request, transfer) {
+              if (!('bitmap' in request)) {
+                postMessage.call(this, request, transfer);
+                return;
+              }
+              const receive = this.onmessage;
+              this.onmessage = (event) => {
+                this.onmessage = receive;
+                canvas.parentElement!.classList.add('rr-block');
+                receive?.call(this, event);
+                resolve(
+                  canvas.querySelector('img')?.getAttribute('src') ?? null,
+                );
+              };
+              postMessage.call(this, request, transfer);
+            };
+            const context = canvas.getContext('2d')!;
+            context.fillStyle = '#e11d48';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+          });
+          return { before, during };
+        } finally {
+          Worker.prototype.postMessage = postMessage;
+          recorder.recordStop?.();
+        }
+      });
+      expect(src.before).toMatch(/^data:image\/webp;base64,/);
+      expect(src.during).toBeNull();
+    });
+
     it('rejects image mode when its required recording options are missing', async () => {
       const errors = await defaultOffCtx.page.evaluate(() => {
         const { record } = (window as unknown as IWindow).rrweb;

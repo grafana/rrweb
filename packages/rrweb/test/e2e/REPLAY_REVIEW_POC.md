@@ -33,7 +33,9 @@ The standalone `canvas-raster` fixture records a full-viewport perspective
 scene as sampled WebP image mutations over twelve seconds. Its comparison loads
 the same events in both the base and candidate players with their default
 settings, checks visible pixels and the script-blocked sandbox, and holds the
-last frame for inspection. The source viewport and recorded video size are both
+last frame for inspection. The base recorder also records the same scene as a
+control and must emit sampled canvas commands instead of image mutations. The
+source viewport and recorded video size are both
 1280×720; the local comparison render is 13.25 seconds. It publishes its
 comparison and source videos under its own test ID, so the replay comment links
 it as a separate row.
