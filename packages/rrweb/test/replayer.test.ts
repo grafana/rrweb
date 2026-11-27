@@ -187,6 +187,7 @@ describe('replayer', function () {
       replayCanvasSnapshots = true,
       includeToggleFrames = false,
       includeEvictionCanvases = false,
+      includeResizeFrames = false,
     ) => {
       const useVirtualDomOption =
         useVirtualDom === undefined
@@ -233,15 +234,15 @@ describe('replayer', function () {
                 : ''
             }
           ];
-          const makeBase64 = (leftColor, rightColor) => {
+          const makeBase64 = (leftColor, rightColor, width = 80) => {
             const source = document.createElement('canvas');
-            source.width = 80;
+            source.width = width;
             source.height = 50;
             const context = source.getContext('2d');
             context.fillStyle = leftColor;
-            context.fillRect(0, 0, 40, 50);
+            context.fillRect(0, 0, width / 2, 50);
             context.fillStyle = rightColor;
-            context.fillRect(40, 0, 40, 50);
+            context.fillRect(width / 2, 0, width / 2, 50);
             return source.toDataURL('image/webp', 1).split(',')[1];
           };
           const makeElement = (id, tagName, attributes = {}, childNodes = []) => ({
@@ -285,7 +286,7 @@ describe('replayer', function () {
           };
           const firstBase64 = makeBase64('#ff0000', '#0000ff');
           const secondBase64 = makeBase64('#00ff00', '#ffff00');
-          const makeEvent = (id, base64, timestamp) => ({
+          const makeEvent = (id, base64, timestamp, width = 80) => ({
             type: EventType.IncrementalSnapshot,
             timestamp,
             data: {
@@ -293,7 +294,7 @@ describe('replayer', function () {
               id,
               type: 0,
               commands: [
-                { property: 'clearRect', args: [0, 0, 80, 50] },
+                { property: 'clearRect', args: [0, 0, width, 50] },
                 {
                   property: 'drawImage',
                   args: [
@@ -331,7 +332,20 @@ describe('replayer', function () {
             ${evictionMutationEvent}
             ${toggleFrameEvents}
             ${evictionFrameEvents}
-          ];
+            ${
+              includeResizeFrames
+                ? `...[
+              [250, [{ id: 9002, attributes: { width: '60' } }]],
+              [270, [{ id: 9002, attributes: { title: 'Resized canvas' } }]],
+            ].map(([timestamp, attributes]) => ({
+              type: EventType.IncrementalSnapshot,
+              timestamp,
+              data: { source: IncrementalSource.Mutation, texts: [], attributes, removes: [], adds: [] },
+            })),
+            makeEvent(9002, makeBase64('#00ff00', '#ffff00', 60), 260, 60),`
+                : ''
+            }
+          ].sort((left, right) => left.timestamp - right.timestamp);
           const replayer = new Replayer(replayEvents, {
             replayCanvasSnapshots: ${String(
               replayCanvasSnapshots,
@@ -592,6 +606,26 @@ describe('replayer', function () {
       });
       await page.evaluate('window.__rrwebRasterReplayer.destroy()');
     }
+
+    const resizedCanvas = await setupCanvasReplay(
+      undefined,
+      true,
+      false,
+      false,
+      true,
+    );
+    expect(resizedCanvas.initialImagesFound).toBe(true);
+    await page.evaluate('window.__rrwebRasterReplayer.pause(280)');
+    await page.waitForFunction(
+      () => {
+        const doc = window.__rrwebRasterReplayer.iframe.contentDocument;
+        const canvas = doc.getElementById('intrinsic-snapshot-canvas');
+        const image = canvas.querySelector('img');
+        return canvas.width === 60 && image?.naturalWidth === 60;
+      },
+      { timeout: 5000 },
+    );
+    await page.evaluate('window.__rrwebRasterReplayer.destroy()');
 
     const boundedEviction = await setupCanvasReplay(
       undefined,

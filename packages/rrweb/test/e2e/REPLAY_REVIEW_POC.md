@@ -30,7 +30,7 @@ workflow attempt. Fork PRs can use the Actions summary and artifacts.
 ## Canvas raster visual case
 
 The standalone `canvas-raster` fixture records a full-viewport perspective
-scene as twelve static WebP snapshots over eleven seconds. Its comparison keeps
+scene with the recorder's numeric canvas sampling and WebP encoding over twelve seconds. Its comparison keeps
 snapshot playback off for the base, enables it for the candidate, checks visible
 pixels and the unchanged script-blocked sandbox, and holds the last frame for
 inspection. The source viewport and recorded video size are both 1280×720; the

@@ -36,38 +36,6 @@ function findSerializedCanvas(node) {
   return undefined;
 }
 
-function createRasterSnapshotEvent(id, base64, timestamp) {
-  return {
-    type: 3,
-    timestamp,
-    data: {
-      source: 9,
-      id,
-      type: 0,
-      commands: [
-        { property: 'clearRect', args: [0, 0, width, height] },
-        {
-          property: 'drawImage',
-          args: [
-            {
-              rr_type: 'ImageBitmap',
-              args: [
-                {
-                  rr_type: 'Blob',
-                  type: 'image/webp',
-                  data: [{ rr_type: 'ArrayBuffer', base64 }],
-                },
-              ],
-            },
-            0,
-            0,
-          ],
-        },
-      ],
-    },
-  };
-}
-
 await mkdir(artifactDir, { recursive: true });
 await Promise.all(
   ['source.webm', 'events.json', 'summary.json'].map((name) =>
@@ -136,7 +104,7 @@ try {
           <main class="hud">
             <header><div><div class="eyebrow">Perspective study · live canvas</div>
               <h1>Depth in motion</h1></div><span class="badge">STATIC WEBP SAMPLES</span></header>
-            <footer><span>One canvas · twelve sampled frames</span><span>0 — 11 seconds</span></footer>
+            <footer><span>One canvas · sampled frames</span><span>0 — 12 seconds</span></footer>
           </main><script>
           const canvas = document.querySelector('#${canvasId}');
           const context = canvas.getContext('2d');
@@ -256,7 +224,6 @@ try {
             context.strokeStyle = '#dbeafe80';
             context.stroke();
           };
-          window.__drawRasterFrame = drawRasterFrame;
           window.__setRasterAnimation = (enabled) => {
             animationEnabled = enabled;
             if (enabled) animationOrigin = performance.now();
@@ -276,62 +243,42 @@ try {
   });
   await page.goto(initialUrl);
   await page.addScriptTag({ path: bundlePath });
-  await page.evaluate(() => {
+  await page.evaluate((canvasId) => {
+    const canvas = document.getElementById(canvasId);
+    canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
     window.__recordedEvents = [];
     window.__recordingStop = window.rrweb.record({
+      recordCanvas: true,
+      sampling: { canvas: 2 },
+      dataURLOptions: { type: 'image/webp', quality: 1 },
       emit(event) {
         window.__recordedEvents.push(event);
       },
     });
-  });
+  }, canvasId);
   await page.waitForFunction(() =>
     window.__recordedEvents.some((event) => event.type === 2),
   );
-  const rasterFrames = [];
-  const captureFrame = async () =>
-    page.evaluate(() => {
-      const dataUrl = document
-        .querySelector('#raster-snapshot-canvas')
-        .toDataURL('image/webp', 1);
-      if (!dataUrl.startsWith('data:image/webp;base64,')) {
-        throw new Error('Canvas frame was not encoded as WebP');
-      }
-      return {
-        timestamp: Date.now(),
-        base64: dataUrl.slice(dataUrl.indexOf(',') + 1),
-      };
-    });
-  for (let second = 0; second <= 11; second++) {
-    if (second > 0) await pause(1000);
-    await page.evaluate(
-      (elapsedMs) => window.__drawRasterFrame(elapsedMs),
-      second * 1000,
-    );
-    rasterFrames.push(await captureFrame());
-  }
+  await pause(12_000);
   await page.evaluate(() => window.__setRasterAnimation(false));
-  await pause(1500);
+  await pause(2000);
   await page.evaluate(() => window.__recordingStop());
-  const capturedEvents = await page.evaluate(() => window.__recordedEvents);
-  const fullSnapshots = capturedEvents.filter((event) => event.type === 2);
-  assert.ok(
-    fullSnapshots.length >= 1,
-    'recording should contain a full snapshot',
-  );
-  const canvasNode = findSerializedCanvas(fullSnapshots[0].data.node);
+  const events = await page.evaluate(() => window.__recordedEvents);
+  const fullSnapshot = events.find((event) => event.type === 2);
+  const canvasNode = findSerializedCanvas(fullSnapshot?.data.node);
   assert.ok(canvasNode, 'full snapshot should include the target canvas');
-  assert.equal(rasterFrames.length, 12);
-
-  const rasterEvents = rasterFrames.map((frame, index) =>
-    createRasterSnapshotEvent(
-      canvasNode.id,
-      frame.base64,
-      fullSnapshots[0].timestamp + 8 + index * 1000,
-    ),
+  assert.equal(canvasNode.attributes.rr_dataURL, undefined);
+  const frames = events.filter(
+    (event) => event.type === 3 && event.data.source === 9,
   );
-  const events = [...capturedEvents, ...rasterEvents].sort(
-    (left, right) => left.timestamp - right.timestamp,
+  assert.ok(
+    frames.length >= 12,
+    'recorder should emit at least twelve sampled frames',
   );
+  for (const { data } of frames) {
+    assert.equal(data.id, canvasNode.id);
+    assert.equal(data.commands[1]?.args[0]?.args[0]?.type, 'image/webp');
+  }
   eventPayloads = events.map((event, sequence) => ({
     fixtureId,
     sequence,

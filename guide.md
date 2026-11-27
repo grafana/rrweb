@@ -395,7 +395,7 @@ The replayer accepts options as its constructor's second parameter, and it has t
 | useVirtualDom           | true          | whether to use Virtual Dom optimization in the process of skipping to a new point of time                                                                                                                                      |
 | logger                  | console       | The logger object used by the replayer to print warnings or errors                                                                                                                                                             |
 
-When enabled, `replayCanvasSnapshots` applies to events cast after it is enabled; it does not restore earlier frames. Unsupported or invalid canvas mutation events clear any earlier snapshot for that canvas. The replay document's Content Security Policy must allow embedded image data through `img-src`.
+To produce compatible samples, record with `recordCanvas: true`, a positive numeric `sampling.canvas` value, and `dataURLOptions: { type: 'image/webp' }`. Enable `replayCanvasSnapshots` before playback or seeking. If you enable it during playback, rewind to before a frame to see it again. Unsupported or invalid canvas mutation events clear any earlier snapshot for that canvas. The replay document's Content Security Policy must allow embedded image data through `img-src`.
 
 #### Use rrweb-player
 

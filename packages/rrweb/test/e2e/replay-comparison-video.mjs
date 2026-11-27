@@ -41,10 +41,9 @@ const rasterSnapshotEvents = events.filter(
     event.data?.commands?.[1]?.property === 'drawImage',
 );
 if (canvasRaster) {
-  assert.equal(
-    rasterSnapshotEvents.length,
-    12,
-    'Canvas raster video requires twelve static WebP snapshots',
+  assert.ok(
+    rasterSnapshotEvents.length >= 12,
+    'Canvas raster video requires at least twelve static WebP snapshots',
   );
   assert.equal(
     rasterSnapshotEvents[0].data.id,
@@ -95,8 +94,12 @@ if (canvasRaster) {
     'Canvas raster comparison must be at least ten seconds',
   );
 }
-const firstFrame =
-  fullSnapshot.timestamp - events[0].timestamp + 32 + (canvasRaster ? 100 : 0);
+const firstFrame = Math.max(
+  fullSnapshot.timestamp - events[0].timestamp + 32,
+  canvasRaster
+    ? rasterSnapshotEvents[0].timestamp - events[0].timestamp + 64
+    : 0,
+);
 assert.ok(
   Number.isFinite(duration) && duration > firstFrame,
   'Video requires a timed recording',

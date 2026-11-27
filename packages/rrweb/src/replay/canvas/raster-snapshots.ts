@@ -465,7 +465,7 @@ export function attachRasterCanvasSnapshots(replayer: Replayer): () => void {
     if (canvas && deferDomCleanup) {
       pendingDocuments.add(canvas.ownerDocument);
     }
-    if (deferDomCleanup) {
+    if (deferDomCleanup && (canvas || image)) {
       pendingCleanup.push({ id, canvas, image });
     } else {
       image?.removeAttribute('src');
@@ -682,7 +682,8 @@ export function attachRasterCanvasSnapshots(replayer: Replayer): () => void {
   const onEventCast = (rawEvent: unknown) => {
     // The state map is capped, so pruning on ordinary events keeps lifecycle
     // cleanup prompt without making replay work proportional to page size.
-    pruneDetachedCanvases();
+    // During a seek the real canvas has its old size until the virtual DOM flush.
+    if (!replayer.usingVirtualDom) pruneDetachedCanvases();
     const canvasId = getCanvasMutationId(rawEvent);
     const snapshot = getRasterCanvasSnapshot(rawEvent);
     if (disposed) {
