@@ -441,15 +441,17 @@ describe('record webgl', function (this: ISuite) {
           value: 'loading',
         });
         try {
-          const stop = recorder.rrweb.record({
-            emit: recorder.emit,
-            recordCanvas: true,
-            recordCanvasAsImage: true,
-            sampling: { canvas: 20 },
+          return [true, false].every((recordCanvasAsImage) => {
+            const stop = recorder.rrweb.record({
+              emit: recorder.emit,
+              recordCanvas: true,
+              recordCanvasAsImage,
+              sampling: { canvas: 20 },
+            });
+            const patched = prototype.getContext !== original;
+            stop?.();
+            return patched && prototype.getContext === original;
           });
-          const patched = prototype.getContext !== original;
-          stop?.();
-          return patched && prototype.getContext === original;
         } finally {
           Reflect.deleteProperty(document, 'readyState');
         }
@@ -503,6 +505,18 @@ describe('record webgl', function (this: ISuite) {
       });
       expect(src.before).toMatch(/^data:image\/webp;base64,/);
       expect(src.during).toBeNull();
+      const mutations = imageCtx.events
+        .filter((event) => event.type === EventType.IncrementalSnapshot)
+        .map((event) => event.data)
+        .filter((data) => data.source === IncrementalSource.Mutation);
+      const addedImage = mutations
+        .flatMap((data) => data.adds)
+        .find(({ node }) => node.type === 2 && node.tagName === 'img');
+      expect(addedImage).toBeDefined();
+      expect(mutations.flatMap((data) => data.removes)).toContainEqual({
+        parentId: addedImage?.parentId,
+        id: addedImage?.node.id,
+      });
     });
 
     it('rejects image mode when its required recording options are missing', async () => {

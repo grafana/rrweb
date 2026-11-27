@@ -10,6 +10,7 @@ import {
   isNativeShadowDom,
   getInputType,
   toLowerCase,
+  isCanvasFallbackImage,
 } from '@grafana/rrweb-snapshot';
 import type { observerParam, MutationBufferParam } from '../types';
 import type {
@@ -596,6 +597,10 @@ export default class MutationBuffer {
         }
         if (
           isBlocked(m.target, this.blockClass, this.blockSelector, false) ||
+          (attributeName === 'src' &&
+            value !== null &&
+            isCanvasFallbackImage(m.target) &&
+            isBlocked(m.target, this.blockClass, this.blockSelector, true)) ||
           value === m.oldValue
         ) {
           return;
@@ -693,26 +698,29 @@ export default class MutationBuffer {
         break;
       }
       case 'childList': {
-        /**
-         * Parent is blocked, ignore all child mutations
-         */
-        if (isBlocked(m.target, this.blockClass, this.blockSelector, true))
-          return;
+        const parentBlocked = isBlocked(
+          m.target,
+          this.blockClass,
+          this.blockSelector,
+          true,
+        );
 
         if ((m.target as Element).tagName === 'TEXTAREA') {
-          // children would be ignored in genAdds as they aren't in the mirror
-          this.genTextAreaValueMutation(m.target as HTMLTextAreaElement);
+          if (!parentBlocked)
+            this.genTextAreaValueMutation(m.target as HTMLTextAreaElement);
           return; // any removedNodes won't have been in mirror either
         }
 
-        m.addedNodes.forEach((n) => this.genAdds(n, m.target));
+        if (!parentBlocked)
+          m.addedNodes.forEach((n) => this.genAdds(n, m.target));
         m.removedNodes.forEach((n) => {
+          // A recorder image already sent to replay still needs its removal.
+          if (parentBlocked && !isCanvasFallbackImage(n)) return;
           const nodeId = this.mirror.getId(n);
           const parentId = isShadowRoot(m.target)
             ? this.mirror.getId(dom.host(m.target))
             : this.mirror.getId(m.target);
           if (
-            isBlocked(m.target, this.blockClass, this.blockSelector, false) ||
             isIgnored(n, this.mirror, this.slimDOMOptions) ||
             !isSerialized(n, this.mirror)
           ) {

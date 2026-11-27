@@ -598,8 +598,11 @@ export class CanvasManager {
                   canvas.height !== height))
             ) {
               bitmap.close();
-              if (requestId !== undefined) finishImageRequest(requestId);
-              else snapshotInProgressMap.set(id, false);
+              if (requestId !== undefined) {
+                finishImageRequest(requestId);
+                if (state && isCanvasBlocked(canvas))
+                  removeImageState(id, state);
+              } else snapshotInProgressMap.set(id, false);
               return;
             }
             worker.postMessage(
@@ -654,7 +657,7 @@ export class CanvasManager {
       disposed = true;
       canvasContextReset();
       cancelAnimationFrame(rafId);
-      if (options.recordCanvasAsImage) worker.terminate();
+      if (!workerFailed) worker.terminate();
       imageStates.forEach((state) => {
         state.image?.removeAttribute('src');
         state.image?.remove();

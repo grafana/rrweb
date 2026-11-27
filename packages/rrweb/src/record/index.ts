@@ -631,7 +631,7 @@ function record<T = eventWithTime>(
           }
         }
       });
-      if (recordCanvasAsImage) canvasManager.reset();
+      canvasManager.reset();
       processedNodeManager.destroy();
       recording = false;
       unregisterErrorHandler();
