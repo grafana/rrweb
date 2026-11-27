@@ -88,6 +88,7 @@ function record<T = eventWithTime>(
     mousemoveWait,
     recordDOM = true,
     recordCanvas = false,
+    recordCanvasAsImage = false,
     recordCrossOriginIframes = false,
     recordAfter = options.recordAfter === 'DOMContentLoaded'
       ? options.recordAfter
@@ -131,6 +132,19 @@ function record<T = eventWithTime>(
   // move departed options to new options
   if (mousemoveWait !== undefined && sampling.mousemove === undefined) {
     sampling.mousemove = mousemoveWait;
+  }
+
+  if (
+    recordCanvasAsImage &&
+    (!recordDOM ||
+      !recordCanvas ||
+      typeof sampling.canvas !== 'number' ||
+      !Number.isFinite(sampling.canvas) ||
+      sampling.canvas <= 0)
+  ) {
+    throw new Error(
+      'recordCanvasAsImage requires recordDOM, recordCanvas, and a positive numeric sampling.canvas value.',
+    );
   }
 
   // reset mirror in case `record` this was called earlier
@@ -307,6 +321,7 @@ function record<T = eventWithTime>(
     mirror,
     sampling: sampling.canvas,
     dataURLOptions,
+    recordCanvasAsImage,
   });
 
   const shadowDomManager = new ShadowDomManager({

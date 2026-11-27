@@ -33,12 +33,14 @@ interface IWindow extends Window {
     addCustomEvent<T>(tag: string, payload: T): void;
   };
   emit: (e: eventWithTime) => undefined;
+  recordStop?: listenerHandler;
 }
 
 const setup = function (
   this: ISuite,
   content: string,
   canvasSample: 'all' | number = 'all',
+  recordCanvasAsImage = false,
 ): ISuite {
   const ctx = {} as ISuite;
 
@@ -63,16 +65,24 @@ const setup = function (
 
     ctx.page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
 
-    await ctx.page.evaluate((canvasSample) => {
-      const { record } = (window as unknown as IWindow).rrweb;
-      record({
-        recordCanvas: true,
-        sampling: {
-          canvas: canvasSample,
-        },
-        emit: (window as unknown as IWindow).emit,
-      });
-    }, canvasSample);
+    await ctx.page.evaluate(
+      (canvasSample, recordCanvasAsImage) => {
+        const { record } = (window as unknown as IWindow).rrweb;
+        (window as unknown as IWindow).recordStop = record({
+          recordCanvas: true,
+          recordCanvasAsImage,
+          sampling: {
+            canvas: canvasSample,
+          },
+          dataURLOptions: recordCanvasAsImage
+            ? { type: 'image/webp', quality: 1 }
+            : undefined,
+          emit: (window as unknown as IWindow).emit,
+        });
+      },
+      canvasSample,
+      recordCanvasAsImage,
+    );
   });
 
   afterEach(async () => {
@@ -313,6 +323,153 @@ describe('record webgl', function (this: ISuite) {
 
       // should yield a frame for each change at a max of 60fps
       await assertSnapshot(stripBase64(ctx.events));
+      expect(
+        await ctx.page.evaluate(
+          () => document.querySelector('#canvas img') !== null,
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe('recordCanvasAsImage', function (this: ISuite) {
+    const defaultOffCtx: ISuite = setup.call(
+      this,
+      `<!doctype html><canvas id="canvas" width="80" height="50"></canvas>`,
+      20,
+    );
+    const imageCtx: ISuite = setup.call(
+      this,
+      `<!doctype html><canvas id="canvas" width="80" height="50"></canvas>`,
+      20,
+      true,
+    );
+
+    it('keeps image fallback disabled by default', async () => {
+      await defaultOffCtx.page.evaluate(() => {
+        const canvas = document.querySelector('#canvas') as HTMLCanvasElement;
+        const context = canvas.getContext('2d')!;
+        context.fillStyle = '#e11d48';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+      });
+      await defaultOffCtx.page.waitForTimeout(150);
+      expect(
+        await defaultOffCtx.page.evaluate(
+          () => document.querySelector('#canvas img') !== null,
+        ),
+      ).toBe(false);
+      expect(
+        defaultOffCtx.events.some(
+          (event) =>
+            event.type === EventType.IncrementalSnapshot &&
+            event.data.source === IncrementalSource.CanvasMutation,
+        ),
+      ).toBe(true);
+    });
+
+    it('records sampled frames as normal image mutations and removes its image on stop', async () => {
+      const waitForImage = () =>
+        imageCtx.page.waitForFunction(
+          () =>
+            document
+              .querySelector('#canvas img')
+              ?.getAttribute('src')
+              ?.startsWith('data:image/webp;base64,'),
+          { timeout: 5000 },
+        );
+      await imageCtx.page.evaluate(() => {
+        const canvas = document.querySelector('#canvas') as HTMLCanvasElement;
+        const context = canvas.getContext('2d')!;
+        context.fillStyle = '#e11d48';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+      });
+      await waitForImage();
+      await imageCtx.page.evaluate(() => {
+        const canvas = document.querySelector('#canvas') as HTMLCanvasElement;
+        const context = canvas.getContext('2d')!;
+        context.fillStyle = '#2563eb';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+      });
+      await imageCtx.page.waitForTimeout(150);
+
+      const imageEvents = imageCtx.events.filter(
+        (event) =>
+          event.type === EventType.IncrementalSnapshot &&
+          event.data.source === IncrementalSource.Mutation,
+      );
+      const srcValues = imageEvents.flatMap((event) => {
+        const values: string[] = [];
+        event.data.adds.forEach(({ node }) => {
+          if (
+            node.type === 2 &&
+            node.tagName.toLowerCase() === 'img' &&
+            typeof node.attributes.src === 'string'
+          ) {
+            values.push(node.attributes.src);
+          }
+        });
+        event.data.attributes.forEach(({ attributes }) => {
+          if (typeof attributes.src === 'string') values.push(attributes.src);
+        });
+        return values;
+      });
+      expect(srcValues.length).toBeGreaterThanOrEqual(2);
+      expect(
+        srcValues.every(
+          (src) =>
+            src.startsWith('data:image/webp;base64,') &&
+            src.length <= 1_048_576,
+        ),
+      ).toBe(true);
+      expect(
+        imageCtx.events.some(
+          (event) =>
+            event.type === EventType.IncrementalSnapshot &&
+            event.data.source === IncrementalSource.CanvasMutation,
+        ),
+      ).toBe(false);
+
+      await imageCtx.page.evaluate(() =>
+        (window as unknown as IWindow).recordStop?.(),
+      );
+      expect(
+        await imageCtx.page.evaluate(
+          () => document.querySelector('#canvas img') !== null,
+        ),
+      ).toBe(false);
+    });
+
+    it('skips frames outside dimension, pixel, and encoded-byte limits', async () => {
+      expect(
+        imageCtx.events.some((event) => event.type === EventType.FullSnapshot),
+      ).toBe(true);
+      const encodedLength = await imageCtx.page.evaluate(() => {
+        const canvas = document.querySelector('#canvas') as HTMLCanvasElement;
+        canvas.width = 8193;
+        canvas.height = 1;
+        canvas.width = 4096;
+        canvas.height = 4097;
+        canvas.width = 2048;
+        canvas.height = 1024;
+        const context = canvas.getContext('2d')!;
+        const imageData = context.createImageData(canvas.width, canvas.height);
+        let seed = 37;
+        for (let index = 0; index < imageData.data.length; index += 4) {
+          seed = (seed * 48271) % 2147483647;
+          imageData.data[index] = seed & 0xff;
+          imageData.data[index + 1] = (seed >> 8) & 0xff;
+          imageData.data[index + 2] = (seed >> 16) & 0xff;
+          imageData.data[index + 3] = 255;
+        }
+        context.putImageData(imageData, 0, 0);
+        return canvas.toDataURL('image/webp', 1).length;
+      });
+      expect(encodedLength).toBeGreaterThan(1_048_576);
+      await imageCtx.page.waitForTimeout(1000);
+      expect(
+        await imageCtx.page.evaluate(
+          () => document.querySelector('#canvas img') !== null,
+        ),
+      ).toBe(false);
     });
   });
 });

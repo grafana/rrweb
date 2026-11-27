@@ -14,6 +14,7 @@ export interface ImageBitmapDataURLRequestWorker {
     transfer?: [ImageBitmap],
   ) => void;
   onmessage: (message: MessageEvent<ImageBitmapDataURLWorkerResponse>) => void;
+  terminate: () => void;
 }
 
 interface ImageBitmapDataURLResponseWorker {
@@ -49,7 +50,8 @@ const worker: ImageBitmapDataURLResponseWorker = self;
 // eslint-disable-next-line @typescript-eslint/no-misused-promises
 worker.onmessage = async function (e) {
   if ('OffscreenCanvas' in globalThis) {
-    const { id, bitmap, width, height, dataURLOptions } = e.data;
+    const { id, requestId, bitmap, width, height, dataURLOptions, maxBytes } =
+      e.data;
 
     const transparentBase64 = getTransparentBlobFor(
       width,
@@ -65,18 +67,23 @@ worker.onmessage = async function (e) {
     const blob = await offscreen.convertToBlob(dataURLOptions); // takes a while
     const type = blob.type;
     const arrayBuffer = await blob.arrayBuffer();
+    if (maxBytes && arrayBuffer.byteLength > maxBytes) {
+      return worker.postMessage({ id, requestId });
+    }
     const base64 = encode(arrayBuffer); // cpu intensive
 
     // on first try we should check if canvas is transparent,
     // no need to save it's contents in that case
     if (!lastBlobMap.has(id) && (await transparentBase64) === base64) {
       lastBlobMap.set(id, base64);
-      return worker.postMessage({ id });
+      return worker.postMessage({ id, requestId });
     }
 
-    if (lastBlobMap.get(id) === base64) return worker.postMessage({ id }); // unchanged
+    if (lastBlobMap.get(id) === base64)
+      return worker.postMessage({ id, requestId }); // unchanged
     worker.postMessage({
       id,
+      requestId,
       type,
       base64,
       width,
@@ -84,6 +91,9 @@ worker.onmessage = async function (e) {
     });
     lastBlobMap.set(id, base64);
   } else {
-    return worker.postMessage({ id: e.data.id });
+    return worker.postMessage({
+      id: e.data.id,
+      requestId: e.data.requestId,
+    });
   }
 };

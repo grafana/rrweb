@@ -529,18 +529,22 @@ export type canvasManagerMutationCallback = (
 
 export type ImageBitmapDataURLWorkerParams = {
   id: number;
+  requestId?: number;
   bitmap: ImageBitmap;
   width: number;
   height: number;
   dataURLOptions: DataURLOptions;
+  maxBytes?: number;
 };
 
 export type ImageBitmapDataURLWorkerResponse =
   | {
       id: number;
+      requestId?: number;
     }
   | {
       id: number;
+      requestId?: number;
       type: string;
       base64: string;
       width: number;
