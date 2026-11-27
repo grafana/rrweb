@@ -35,3 +35,9 @@ vite.config.ts.timestamp-*
 
 # bundle analysis files
 *-bundle-analysis.html
+
+# Replay review POC output
+packages/rrweb/test-results/
+
+# Local pinned Faro Web SDK checkout for the replay benchmark
+/faro-web-sdk/

@@ -551,6 +551,14 @@ consider compatibility or use guarded feature detection.
 
 GitHub Actions workflows:
 
+- **Pull Request** (`.github/workflows/pull-request.yml`): tests pinned base
+  and candidate revisions in parallel. Both verify recordings delivered by the
+  pinned Faro Web SDK and report the request body bytes and batch counts. The
+  candidate also records a visual review fixture.
+  See [the replay review runbook](packages/rrweb/test/e2e/REPLAY_REVIEW_POC.md)
+  for commands, artifact paths, and per-test video publishing. The comment
+  job uses GitHub artifact metadata and runs only on same-repository PRs.
+
 - **Dependency review** (`.github/workflows/dependency-review.yml`): runs on
   PRs and merge groups. Checks that new dependencies use Apache-2.0-
   compatible licenses (MIT, ISC, BSD-2/3-Clause, 0BSD, BlueOak, Unlicense,
